@@ -25,6 +25,23 @@ export type BatchStatus =
   | 'VEHICLE_EVIDENCE_SUBMITTED'
   | 'CANCELLED';
 
+export interface HardEvidenceCheck {
+  name: string;
+  passed: boolean;
+  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  reason: string;
+}
+
+export interface StructuredGeminiAnalysis {
+  wasteDetected: boolean;
+  visualSimilarityScore: number;
+  sameWasteLikely: boolean;
+  vehicleVisible?: boolean;
+  contextConsistent?: boolean;
+  confidence: number;
+  concerns: string[];
+}
+
 // Database Models (Snake Case - database native)
 export interface DbUser {
   id: string;
@@ -87,9 +104,13 @@ export interface DbEvidence {
 export interface DbVerificationResult {
   id: string;
   evidence_id: string;
+  collection_request_id?: string | null;
   decision: string;
   confidence_score: number;
   analysis: string;
+  hard_evidence_checks?: HardEvidenceCheck[];
+  ai_analysis_details?: StructuredGeminiAnalysis;
+  reason?: string;
   verified_at: string;
 }
 
@@ -138,9 +159,13 @@ export interface EvidenceDTO {
 export interface VerificationResultDTO {
   id: string;
   evidenceId: string;
+  collectionRequestId?: string | null;
   decision: string;
   confidenceScore: number;
   analysis: string;
+  hardEvidenceChecks?: HardEvidenceCheck[];
+  aiAnalysisDetails?: StructuredGeminiAnalysis;
+  reason?: string;
   verifiedAt: string;
 }
 
