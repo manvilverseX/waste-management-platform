@@ -14,9 +14,16 @@ export type CollectionStatus =
   | 'REJECTED' 
   | 'CANCELLED';
 
-export type EvidenceType = 'RESIDENT_BEFORE' | 'COLLECTOR_AFTER';
+export type EvidenceType = 'RESIDENT_BEFORE' | 'COLLECTOR_AFTER' | 'VEHICLE';
 
 export type VerificationStatus = 'pending' | 'verified' | 'rejected';
+
+export type BatchStatus = 
+  | 'CREATED'
+  | 'COLLECTING'
+  | 'READY_FOR_VEHICLE_EVIDENCE'
+  | 'VEHICLE_EVIDENCE_SUBMITTED'
+  | 'CANCELLED';
 
 // Database Models (Snake Case - database native)
 export interface DbUser {
@@ -49,14 +56,24 @@ export interface DbCollectionRequest {
   resident_id: string;
   community_id: string;
   collector_id?: string | null;
+  collection_batch_id?: string | null;
   status: CollectionStatus;
   requested_at: string;
   completed_at: string | null;
 }
 
+export interface DbCollectionBatch {
+  id: string;
+  collector_id: string;
+  status: BatchStatus;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DbEvidence {
   id: string;
-  collection_request_id: string;
+  collection_request_id?: string | null;
+  collection_batch_id?: string | null;
   evidence_type: EvidenceType;
   image_url: string;
   uploaded_by: string;
@@ -82,6 +99,7 @@ export interface CollectionRequestDTO {
   residentId: string;
   communityId: string;
   collectorId?: string | null;
+  collectionBatchId?: string | null;
   status: CollectionStatus;
   requestedAt: string;
   completedAt: string | null;
@@ -91,9 +109,22 @@ export interface CollectionRequestDTO {
   evidence?: EvidenceDTO[];
 }
 
+export interface CollectionBatchDTO {
+  id: string;
+  collectorId: string;
+  collectorName?: string;
+  status: BatchStatus;
+  createdAt: string;
+  updatedAt: string;
+  requestCount?: number;
+  requests?: CollectionRequestDTO[];
+  vehicleEvidence?: EvidenceDTO | null;
+}
+
 export interface EvidenceDTO {
   id: string;
-  collectionRequestId: string;
+  collectionRequestId?: string | null;
+  collectionBatchId?: string | null;
   evidenceType: EvidenceType;
   imageUrl: string;
   uploadedBy: string;

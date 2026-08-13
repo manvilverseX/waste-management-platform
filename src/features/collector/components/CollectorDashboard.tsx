@@ -1,16 +1,25 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { CollectionRequestDTO } from '@/types';
+import { CollectionBatchDTO, CollectionRequestDTO } from '@/types';
 import { CollectionRequestCard } from './CollectionRequestCard';
-import { Truck, RefreshCw, Layers, CheckCircle2, Clock, PackageCheck, Filter, AlertTriangle } from 'lucide-react';
+import { EvidenceUploadModal } from './EvidenceUploadModal';
+import { Truck, RefreshCw, Layers, CheckCircle2, Clock, PackageCheck, Filter, AlertTriangle, Plus, Camera, Check } from 'lucide-react';
 
 export const CollectorDashboard: React.FC = () => {
   const [requests, setRequests] = useState<CollectionRequestDTO[]>([]);
+  const [batches, setBatches] = useState<CollectionBatchDTO[]>([]);
+  const [activeBatch, setActiveBatch] = useState<CollectionBatchDTO | null>(null);
+  const [selectedForBatch, setSelectedForBatch] = useState<string[]>([]);
+
   const [loading, setLoading] = useState(true);
+  const [isCreatingBatch, setIsCreatingBatch] = useState(false);
+  const [isAddingToBatch, setIsAddingToBatch] = useState(false);
+  const [showVehicleModal, setShowVehicleModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>('ALL');
 
+  // Fetch Collection Requests
   const fetchRequests = useCallback(async () => {
     setLoading(true);
     setErrorMessage(null);
@@ -35,10 +44,33 @@ export const CollectorDashboard: React.FC = () => {
       const msg = err instanceof Error ? err.message : 'Failed to fetch collection requests';
       setErrorMessage(msg);
       setRequests([]);
-    } finally {
+    } flex: {
       setLoading(false);
     }
   }, [activeFilter]);
+
+  // Fetch Collector Batches
+  const fetchBatches = useCallback(async () => {
+    try {
+      const res = await fetch('/api/collection-batches');
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setBatches(json.data);
+        // Find active uncompleted batch if available
+        const currentActive = json.data.find(
+          (b: CollectionBatchDTO) => b.status === 'CREATED' || b.status === 'COLLECTING' || b.status === 'READY_FOR_VEHICLE_EVIDENCE'
+        );
+        setActiveBatch(currentActive || null);
+      }
+    } catch (err: unknown) {
+      console.error('Failed to fetch batches:', err);
+    }
+  }, []);
+
+  const refreshAll = useCallback(() => {
+    fetchRequests();
+    fetchBatches();
+  }, [fetchRequests, fetchBatches]);
 
   useEffect(() => {
     let ignore = false;
@@ -48,26 +80,32 @@ export const CollectorDashboard: React.FC = () => {
           ? '/api/collection-requests' 
           : `/api/collection-requests?status=${activeFilter}`;
 
-        const res = await fetch(url);
-        const json = await res.json();
+        const [reqRes, batchRes] = await Promise.all([
+          fetch(url),
+          fetch('/api/collection-batches')
+        ]);
+
+        const reqJson = await reqRes.json();
+        const batchJson = await batchRes.json();
 
         if (!ignore) {
-          if (json.success && Array.isArray(json.data)) {
-            setRequests(json.data);
-          } else {
-            setRequests([]);
-            if (json.error?.message) {
-              setErrorMessage(json.error.message);
-            }
+          if (reqJson.success && Array.isArray(reqJson.data)) {
+            setRequests(reqJson.data);
+          }
+          if (batchJson.success && Array.isArray(batchJson.data)) {
+            setBatches(batchJson.data);
+            const currentActive = batchJson.data.find(
+              (b: CollectionBatchDTO) => b.status === 'CREATED' || b.status === 'COLLECTING' || b.status === 'READY_FOR_VEHICLE_EVIDENCE'
+            );
+            setActiveBatch(currentActive || null);
           }
           setLoading(false);
         }
       } catch (err: unknown) {
         if (!ignore) {
-          console.error('Failed to fetch requests:', err);
-          const msg = err instanceof Error ? err.message : 'Failed to fetch collection requests';
+          console.error('Failed to fetch dashboard data:', err);
+          const msg = err instanceof Error ? err.message : 'Failed to fetch dashboard data';
           setErrorMessage(msg);
-          setRequests([]);
           setLoading(false);
         }
       }
@@ -80,11 +118,73 @@ export const CollectorDashboard: React.FC = () => {
     };
   }, [activeFilter]);
 
+  // Create Collection Batch Handler
+  const handleCreateBatch = async () => {
+    setIsCreatingBatch(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch('/api/collection-batches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const json = await res.json();
+      if (json.success) {
+        setActiveBatch(json.data);
+        refreshAll();
+      } else {
+        setErrorMessage(json.error?.message || 'Failed to create collection batch.');
+      }
+    } catch (err: unknown) {
+      console.error('Create batch error:', err);
+      const msg = err instanceof Error ? err.message : 'Error creating collection batch';
+      setErrorMessage(msg);
+    } finally {
+      setIsCreatingBatch(false);
+    }
+  };
+
+  // Toggle selection of eligible request for batch inclusion
+  const handleToggleSelectForBatch = (id: string) => {
+    setSelectedForBatch((prev) => 
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  // Add selected requests to active batch
+  const handleAddSelectedToBatch = async () => {
+    if (!activeBatch || selectedForBatch.length === 0) return;
+
+    setIsAddingToBatch(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch(`/api/collection-batches/${activeBatch.id}/requests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestIds: selectedForBatch })
+      });
+
+      const json = await res.json();
+      if (json.success) {
+        setSelectedForBatch([]);
+        refreshAll();
+      } else {
+        setErrorMessage(json.error?.message || 'Failed to add requests to collection batch.');
+      }
+    } catch (err: unknown) {
+      console.error('Add to batch error:', err);
+      const msg = err instanceof Error ? err.message : 'Error adding requests to batch';
+      setErrorMessage(msg);
+    } finally {
+      setIsAddingToBatch(false);
+    }
+  };
+
   // Statistics calculation
   const totalCount = requests.length;
   const pendingCount = requests.filter(r => r.status === 'PENDING' || r.status === 'WASTE_READY').length;
   const assignedCount = requests.filter(r => r.status === 'ASSIGNED').length;
   const verifiedCount = requests.filter(r => r.status === 'VERIFIED').length;
+  const eligibleForBatchRequests = requests.filter(r => (r.status === 'PICKUP_EVIDENCE_SUBMITTED' || r.status === 'COLLECTED') && !r.collectionBatchId);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -96,12 +196,12 @@ export const CollectorDashboard: React.FC = () => {
             Collector Dashboard
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Manage authorized waste collection requests, submit evidence, and execute state machine workflow.
+            Manage authorized collection runs, batch household evidence, and upload vehicle proof.
           </p>
         </div>
 
         <button
-          onClick={fetchRequests}
+          onClick={refreshAll}
           disabled={loading}
           className="self-start md:self-auto px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 shadow-xs transition-colors"
         >
@@ -116,6 +216,68 @@ export const CollectorDashboard: React.FC = () => {
           <span>{errorMessage}</span>
         </div>
       )}
+
+      {/* Collection Batch Management Section */}
+      <div className="bg-gradient-to-r from-slate-900 to-indigo-950 rounded-2xl p-6 text-white shadow-lg space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <div>
+            <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">Physical Collection Run ({batches.length} Total Batches)</span>
+            <h2 className="text-xl font-bold flex items-center gap-2 mt-0.5">
+              <Layers className="w-5 h-5 text-indigo-400" />
+              {activeBatch ? `Active Batch: ${activeBatch.id.slice(0, 8)}...` : 'No Active Collection Batch'}
+            </h2>
+          </div>
+
+          {!activeBatch ? (
+            <button
+              onClick={handleCreateBatch}
+              disabled={isCreatingBatch}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold text-xs flex items-center gap-2 shadow-md transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              {isCreatingBatch ? 'Creating Batch...' : 'Start New Collection Batch'}
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              {selectedForBatch.length > 0 && (
+                <button
+                  onClick={handleAddSelectedToBatch}
+                  disabled={isAddingToBatch}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-semibold text-xs flex items-center gap-1.5 shadow-md transition-colors"
+                >
+                  <Check className="w-4 h-4" />
+                  {isAddingToBatch ? 'Adding...' : `Add ${selectedForBatch.length} Selected to Batch`}
+                </button>
+              )}
+
+              <button
+                onClick={() => setShowVehicleModal(true)}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-semibold text-xs flex items-center gap-2 shadow-md transition-colors"
+              >
+                <Camera className="w-4 h-4" />
+                Submit Batch Vehicle Evidence
+              </button>
+            </div>
+          )}
+        </div>
+
+        {activeBatch && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+            <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700">
+              <span className="text-slate-400 block font-medium">Batch Status</span>
+              <span className="font-bold text-indigo-300 text-sm mt-0.5 block">{activeBatch.status}</span>
+            </div>
+            <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700">
+              <span className="text-slate-400 block font-medium">Requests in Batch</span>
+              <span className="font-bold text-emerald-400 text-sm mt-0.5 block">{activeBatch.requestCount || 0} Household Requests</span>
+            </div>
+            <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700">
+              <span className="text-slate-400 block font-medium">Eligible Unbatched Requests</span>
+              <span className="font-bold text-amber-400 text-sm mt-0.5 block">{eligibleForBatchRequests.length} Ready to Add</span>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -155,7 +317,7 @@ export const CollectorDashboard: React.FC = () => {
       {/* Filter Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-200 dark:border-slate-800">
         <Filter className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
-        {['ALL', 'PENDING', 'WASTE_READY', 'ASSIGNED', 'PICKUP_EVIDENCE_SUBMITTED', 'VERIFICATION_IN_PROGRESS', 'NEEDS_REVIEW', 'VERIFIED', 'REJECTED'].map((status) => (
+        {['ALL', 'PENDING', 'WASTE_READY', 'ASSIGNED', 'PICKUP_EVIDENCE_SUBMITTED', 'VEHICLE_EVIDENCE_SUBMITTED', 'VERIFICATION_IN_PROGRESS', 'NEEDS_REVIEW', 'VERIFIED', 'REJECTED'].map((status) => (
           <button
             key={status}
             onClick={() => setActiveFilter(status)}
@@ -186,10 +348,33 @@ export const CollectorDashboard: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {requests.map((req) => (
-            <CollectionRequestCard key={req.id} request={req} onRefresh={fetchRequests} />
-          ))}
+          {requests.map((req) => {
+            const isEligibleForActiveBatch = activeBatch && (req.status === 'PICKUP_EVIDENCE_SUBMITTED' || req.status === 'COLLECTED') && !req.collectionBatchId;
+            return (
+              <CollectionRequestCard
+                key={req.id}
+                request={req}
+                onRefresh={refreshAll}
+                selectableForBatch={Boolean(isEligibleForActiveBatch)}
+                isSelectedForBatch={selectedForBatch.includes(req.id)}
+                onToggleSelectForBatch={handleToggleSelectForBatch}
+              />
+            );
+          })}
         </div>
+      )}
+
+      {/* Vehicle Evidence Modal */}
+      {showVehicleModal && activeBatch && (
+        <EvidenceUploadModal
+          batchId={activeBatch.id}
+          evidenceType="VEHICLE"
+          onClose={() => setShowVehicleModal(false)}
+          onSuccess={() => {
+            setShowVehicleModal(false);
+            refreshAll();
+          }}
+        />
       )}
     </div>
   );

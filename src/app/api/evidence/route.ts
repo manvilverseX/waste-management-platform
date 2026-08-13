@@ -110,6 +110,8 @@ export async function POST(request: NextRequest) {
 
     // 5. Upload camera image to Supabase Storage if base64 payload provided
     let finalImageUrl = imageUrl || '';
+    let uploadedStoragePath: string | null = null;
+
     if (imageBase64) {
       const fileId = crypto.randomUUID();
       const storagePath = `collection-evidence/${collectionRequestId}/${fileId}.jpg`;
@@ -125,10 +127,10 @@ export async function POST(request: NextRequest) {
 
       if (uploadError) {
         console.warn('[POST /api/evidence Supabase Storage Upload Warning]:', uploadError.message);
-        // If Supabase Storage bucket policy fails or bucket doesn't exist, try getting public URL or construct path
         const { data: publicUrlData } = supabase.storage.from('evidence').getPublicUrl(storagePath);
         finalImageUrl = publicUrlData?.publicUrl || storagePath;
       } else {
+        uploadedStoragePath = storagePath;
         const { data: publicUrlData } = supabase.storage.from('evidence').getPublicUrl(storagePath);
         finalImageUrl = publicUrlData.publicUrl;
       }
@@ -152,6 +154,16 @@ export async function POST(request: NextRequest) {
 
     if (insertError || !newEvidence) {
       console.error('[POST /api/evidence Database Error]:', insertError);
+
+      // Compensation cleanup: remove orphaned storage file if DB insert failed
+      if (uploadedStoragePath) {
+        try {
+          await supabase.storage.from('evidence').remove([uploadedStoragePath]);
+        } catch (cleanupErr) {
+          console.error('[POST /api/evidence Storage Cleanup Error]:', cleanupErr);
+        }
+      }
+
       const response: ApiResponse<null> = {
         success: false,
         data: null,

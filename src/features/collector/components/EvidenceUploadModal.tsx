@@ -1,16 +1,24 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { CollectionRequestDTO, VerificationResultDTO } from '@/types';
-import { X, Camera, RefreshCw, Sparkles, CheckCircle, AlertTriangle, Loader2, MapPin } from 'lucide-react';
+import { CollectionRequestDTO, EvidenceType, VerificationResultDTO } from '@/types';
+import { X, Camera, RefreshCw, Sparkles, CheckCircle, AlertTriangle, Loader2, MapPin, Truck } from 'lucide-react';
 
 interface Props {
-  request: CollectionRequestDTO;
+  request?: CollectionRequestDTO;
+  batchId?: string;
+  evidenceType?: EvidenceType;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSuccess }) => {
+export const EvidenceUploadModal: React.FC<Props> = ({
+  request,
+  batchId,
+  evidenceType = 'COLLECTOR_AFTER',
+  onClose,
+  onSuccess
+}) => {
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -25,6 +33,7 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
   const [isVerifying, setIsVerifying] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [verificationResult, setVerificationResult] = useState<VerificationResultDTO | null>(null);
+  const [isVehicleSuccess, setIsVehicleSuccess] = useState(false);
 
   // Refs for Video/Canvas
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -55,7 +64,6 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
       try {
         stream = await navigator.mediaDevices.getUserMedia(constraints);
       } catch {
-        // Fallback to basic video constraint if environment camera unavailable
         stream = await navigator.mediaDevices.getUserMedia({ video: true });
       }
 
@@ -158,7 +166,7 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
     onClose();
   };
 
-  // Submit Evidence & Run AI Verification
+  // Submit Evidence & Process Flow
   const handleSubmitAndVerify = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -176,44 +184,74 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
     setIsUploading(true);
 
     try {
-      // 1. Submit collector evidence payload (image + GPS)
-      const evidenceRes = await fetch('/api/evidence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          collectionRequestId: request.id,
-          evidenceType: 'COLLECTOR_AFTER',
-          imageBase64: capturedPhoto,
-          latitude: location.latitude,
-          longitude: location.longitude,
-          capturedAt: new Date().toISOString()
-        })
-      });
+      if (evidenceType === 'VEHICLE') {
+        // Vehicle Evidence Batch Upload
+        if (!batchId) throw new Error('Collection batch ID is required for vehicle evidence.');
 
-      const evidenceData = await evidenceRes.json();
-      if (!evidenceData.success) {
-        throw new Error(evidenceData.error?.message || 'Failed to upload evidence');
-      }
+        const vehicleRes = await fetch(`/api/collection-batches/${batchId}/vehicle-evidence`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            imageBase64: capturedPhoto,
+            latitude: location.latitude,
+            longitude: location.longitude,
+            capturedAt: new Date().toISOString()
+          })
+        });
 
-      setIsUploading(false);
-      setIsVerifying(true);
+        const vehicleData = await vehicleRes.json();
+        if (!vehicleData.success) {
+          throw new Error(vehicleData.error?.message || 'Failed to submit vehicle evidence.');
+        }
 
-      // 2. Automatically trigger server-side Gemini AI verification
-      const verifyRes = await fetch(`/api/verification/${request.id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      const verifyData = await verifyRes.json();
-      setIsVerifying(false);
-
-      if (!verifyData.success) {
-        setErrorMsg(verifyData.error?.message || 'AI Verification encountered an issue.');
-      } else {
-        setVerificationResult(verifyData.data);
+        setIsUploading(false);
+        setIsVehicleSuccess(true);
         setTimeout(() => {
           onSuccess();
-        }, 2000);
+        }, 1800);
+
+      } else {
+        // Household Collector Pickup Evidence Upload
+        if (!request) throw new Error('Collection request is required for pickup evidence.');
+
+        const evidenceRes = await fetch('/api/evidence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            collectionRequestId: request.id,
+            evidenceType: 'COLLECTOR_AFTER',
+            imageBase64: capturedPhoto,
+            latitude: location.latitude,
+            longitude: location.longitude,
+            capturedAt: new Date().toISOString()
+          })
+        });
+
+        const evidenceData = await evidenceRes.json();
+        if (!evidenceData.success) {
+          throw new Error(evidenceData.error?.message || 'Failed to upload evidence');
+        }
+
+        setIsUploading(false);
+        setIsVerifying(true);
+
+        // Automatically trigger server-side Gemini AI verification for request
+        const verifyRes = await fetch(`/api/verification/${request.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const verifyData = await verifyRes.json();
+        setIsVerifying(false);
+
+        if (!verifyData.success) {
+          setErrorMsg(verifyData.error?.message || 'AI Verification encountered an issue.');
+        } else {
+          setVerificationResult(verifyData.data);
+          setTimeout(() => {
+            onSuccess();
+          }, 2000);
+        }
       }
 
     } catch (err: unknown) {
@@ -224,6 +262,8 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
       setIsVerifying(false);
     }
   };
+
+  const isVehicleMode = evidenceType === 'VEHICLE';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -237,10 +277,20 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
         </button>
 
         <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-1 flex items-center gap-2">
-          <Camera className="w-5 h-5 text-emerald-600" /> Live Evidence Capture
+          {isVehicleMode ? (
+            <>
+              <Truck className="w-5 h-5 text-indigo-600" /> Batch Vehicle Evidence Capture
+            </>
+          ) : (
+            <>
+              <Camera className="w-5 h-5 text-emerald-600" /> Household Pickup Evidence Capture
+            </>
+          )}
         </h3>
         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
-          Capture photo evidence and GPS location for request ID: <code className="font-mono text-emerald-600">{request.id.slice(0, 8)}</code>
+          {isVehicleMode
+            ? `Capture vehicle photo (garbage + truck) for Batch ID: ${batchId?.slice(0, 8)}`
+            : `Capture pickup photo and GPS for Request ID: ${request?.id.slice(0, 8)}`}
         </p>
 
         {errorMsg && (
@@ -250,7 +300,17 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
           </div>
         )}
 
-        {verificationResult ? (
+        {isVehicleSuccess ? (
+          <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-slate-900 dark:text-white space-y-2">
+            <div className="flex items-center gap-2 text-indigo-600 font-bold">
+              <CheckCircle className="w-5 h-5" />
+              <span>Vehicle Evidence Submitted Successfully!</span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Batch and included collection requests updated to <strong>VEHICLE_EVIDENCE_SUBMITTED</strong>.
+            </p>
+          </div>
+        ) : verificationResult ? (
           <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-slate-900 dark:text-white space-y-2">
             <div className="flex items-center gap-2 text-emerald-600 font-bold">
               <CheckCircle className="w-5 h-5" />
@@ -307,10 +367,12 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
                 <button
                   type="button"
                   onClick={handleCapturePhoto}
-                  className="absolute bottom-3 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-full shadow-lg flex items-center gap-2 transition-transform active:scale-95"
+                  className={`absolute bottom-3 left-1/2 -translate-x-1/2 px-4 py-2 ${
+                    isVehicleMode ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-emerald-600 hover:bg-emerald-500'
+                  } text-white text-xs font-bold rounded-full shadow-lg flex items-center gap-2 transition-transform active:scale-95`}
                 >
                   <Camera className="w-4 h-4" />
-                  Take Snapshot
+                  Take {isVehicleMode ? 'Vehicle Photo' : 'Pickup Snapshot'}
                 </button>
               )}
             </div>
@@ -377,17 +439,19 @@ export const EvidenceUploadModal: React.FC<Props> = ({ request, onClose, onSucce
               <button
                 type="submit"
                 disabled={!capturedPhoto || !location || isUploading || isVerifying}
-                className="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-md flex items-center gap-2 disabled:opacity-50 transition-colors"
+                className={`px-5 py-2 text-sm font-medium text-white ${
+                  isVehicleMode ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-emerald-600 hover:bg-emerald-500'
+                } rounded-lg shadow-md flex items-center gap-2 disabled:opacity-50 transition-colors`}
               >
                 {isUploading || isVerifying ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    {isUploading ? 'Uploading to Supabase...' : 'Verifying with Gemini AI...'}
+                    {isUploading ? 'Uploading to Supabase...' : 'Verifying...'}
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    Submit Evidence & Verify
+                    {isVehicleMode ? 'Submit Vehicle Evidence' : 'Submit Evidence & Verify'}
                   </>
                 )}
               </button>

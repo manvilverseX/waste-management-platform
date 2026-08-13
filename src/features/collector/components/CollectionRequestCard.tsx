@@ -4,14 +4,23 @@ import React, { useState } from 'react';
 import { CollectionRequestDTO, VerificationResultDTO } from '@/types';
 import { VerificationStatusBadge } from './VerificationStatusBadge';
 import { EvidenceUploadModal } from './EvidenceUploadModal';
-import { MapPin, User, Calendar, Camera, Sparkles, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { MapPin, User, Calendar, Camera, Sparkles, CheckCircle2, AlertCircle, Clock, Layers } from 'lucide-react';
 
 interface Props {
   request: CollectionRequestDTO;
   onRefresh: () => void;
+  selectableForBatch?: boolean;
+  isSelectedForBatch?: boolean;
+  onToggleSelectForBatch?: (id: string) => void;
 }
 
-export const CollectionRequestCard: React.FC<Props> = ({ request, onRefresh }) => {
+export const CollectionRequestCard: React.FC<Props> = ({
+  request,
+  onRefresh,
+  selectableForBatch = false,
+  isSelectedForBatch = false,
+  onToggleSelectForBatch
+}) => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -63,9 +72,23 @@ export const CollectionRequestCard: React.FC<Props> = ({ request, onRefresh }) =
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between">
+    <div className={`bg-white dark:bg-slate-900 border ${
+      isSelectedForBatch ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-slate-200 dark:border-slate-800'
+    } rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between relative`}>
       <div>
-        <div className="flex items-center justify-between mb-3">
+        {/* Selection Checkbox for Batch Inclusion */}
+        {selectableForBatch && onToggleSelectForBatch && (
+          <div className="absolute top-4 right-4 z-10">
+            <input
+              type="checkbox"
+              checked={isSelectedForBatch}
+              onChange={() => onToggleSelectForBatch(request.id)}
+              className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+            />
+          </div>
+        )}
+
+        <div className="flex items-center justify-between mb-3 pr-6">
           <span className="font-mono text-xs font-semibold text-slate-400">
             ID: {request.id.slice(0, 8)}...
           </span>
@@ -87,6 +110,12 @@ export const CollectionRequestCard: React.FC<Props> = ({ request, onRefresh }) =
               <span>Assigned Collector: {request.collectorName}</span>
             </div>
           )}
+          {request.collectionBatchId && (
+            <div className="flex items-center gap-2 text-xs text-purple-600 dark:text-purple-400 font-medium">
+              <Layers className="w-3.5 h-3.5" />
+              <span>Batch: {request.collectionBatchId.slice(0, 8)}</span>
+            </div>
+          )}
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <Calendar className="w-4 h-4" />
             <span>Requested: {new Date(request.requestedAt).toLocaleString()}</span>
@@ -94,7 +123,7 @@ export const CollectionRequestCard: React.FC<Props> = ({ request, onRefresh }) =
         </div>
 
         {errorMessage && (
-          <div className="mb-3 p-2 rounded.lg bg-rose-500/10 border border-rose-500/20 text-rose-600 text-xs flex items-center gap-1.5">
+          <div className="mb-3 p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-600 text-xs flex items-center gap-1.5">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             <span>{errorMessage}</span>
           </div>
@@ -131,7 +160,7 @@ export const CollectionRequestCard: React.FC<Props> = ({ request, onRefresh }) =
           </span>
         )}
 
-        {(request.status === 'VERIFIED' || request.status === 'REJECTED' || request.status === 'NEEDS_REVIEW' || request.status === 'COLLECTED' || request.status === 'PICKUP_EVIDENCE_SUBMITTED') && (
+        {(request.status === 'VERIFIED' || request.status === 'REJECTED' || request.status === 'NEEDS_REVIEW' || request.status === 'COLLECTED' || request.status === 'PICKUP_EVIDENCE_SUBMITTED' || request.status === 'VEHICLE_EVIDENCE_SUBMITTED') && (
           <button
             onClick={fetchAiResult}
             disabled={isLoadingAiResult}

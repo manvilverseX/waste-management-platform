@@ -39,8 +39,8 @@ export async function getAuthUserAndProfile(req: NextRequest): Promise<AuthCheck
     }
   }
 
-  // 2. Dev / Test fallback: check x-user-id header if provided in test requests
-  if (!userId) {
+  // 2. Test fallback: check x-user-id header only in automated test environment
+  if (!userId && (process.env.NODE_ENV === 'test' || process.env.ALLOW_TEST_HEADER === 'true')) {
     const testUserId = req.headers.get('x-user-id');
     if (testUserId) {
       userId = testUserId;
