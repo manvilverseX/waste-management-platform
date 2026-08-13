@@ -1,21 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createServerSupabaseClient, getAuthUserAndProfile, requireCollectorAuth } from '@/lib/supabase/server';
 import { analyzeEvidenceWithGemini } from '@/lib/gemini/client';
+import { validateStatusTransition } from '@/lib/collector/state-machine';
 import { ApiResponse, VerificationResultDTO } from '@/types';
 
 /**
  * POST /api/verification/:requestId
  * Executes AI Evidence Verification using server-side Gemini API call.
+ * Enforces authentication, collector assignment authorization, and strict state machine rules.
  */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
+    // 1. Authenticate user and verify collector role
+    const { user, errorResponse } = await requireCollectorAuth(request);
+    if (errorResponse) {
+      return errorResponse;
+    }
+
     const { requestId } = await params;
     const supabase = createServerSupabaseClient();
 
-    // 1. Fetch collection request and all associated evidence
+    // 2. Fetch collection request details
+    const { data: targetReq, error: reqError } = await supabase
+      .from('collection_requests')
+      .select('*')
+      .eq('id', requestId)
+      .single();
+
+    if (reqError || !targetReq) {
+      const response: ApiResponse<null> = {
+        success: false,
+        data: null,
+        error: {
+          code: 'NOT_FOUND',
+          message: `Collection request with ID '${requestId}' not found.`
+        }
+      };
+      return NextResponse.json(response, { status: 404 });
+    }
+
+    // 3. Verify collector assignment
+    if (targetReq.collector_id && targetReq.collector_id !== user!.id) {
+      const response: ApiResponse<null> = {
+        success: false,
+        data: null,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'You are not assigned to this collection request.'
+        }
+      };
+      return NextResponse.json(response, { status: 403 });
+    }
+
+    // 4. Fetch evidence list for the request
     const { data: evidenceList, error: evidenceError } = await supabase
       .from('evidence')
       .select('*')
@@ -33,7 +73,7 @@ export async function POST(
       return NextResponse.json(response, { status: 404 });
     }
 
-    // 2. Identify RESIDENT_BEFORE and COLLECTOR_AFTER evidence items
+    // 5. Identify RESIDENT_BEFORE and COLLECTOR_AFTER evidence items
     const beforeEvidence = evidenceList.find((e) => e.evidence_type === 'RESIDENT_BEFORE');
     const afterEvidence = evidenceList.find((e) => e.evidence_type === 'COLLECTOR_AFTER');
 
@@ -61,13 +101,32 @@ export async function POST(
       return NextResponse.json(response, { status: 400 });
     }
 
-    // 3. Call server-side Gemini AI service
+    // 6. Transition state machine to VERIFICATION_IN_PROGRESS
+    const inProgressTransition = validateStatusTransition(targetReq.status, 'VERIFICATION_IN_PROGRESS');
+    if (!inProgressTransition.valid) {
+      const response: ApiResponse<null> = {
+        success: false,
+        data: null,
+        error: {
+          code: 'INVALID_STATE_TRANSITION',
+          message: inProgressTransition.reason || `Cannot verify request in '${targetReq.status}' state.`
+        }
+      };
+      return NextResponse.json(response, { status: 422 });
+    }
+
+    await supabase
+      .from('collection_requests')
+      .update({ status: 'VERIFICATION_IN_PROGRESS' })
+      .eq('id', requestId);
+
+    // 7. Call server-side Gemini AI service
     const aiResult = await analyzeEvidenceWithGemini(
       beforeEvidence.image_url,
       afterEvidence.image_url
     );
 
-    // 4. Save verification result to database (associated with collector's evidence)
+    // 8. Save verification result to database (associated with collector's evidence)
     const { data: savedVerification, error: insertError } = await supabase
       .from('verification_results')
       .insert({
@@ -92,24 +151,32 @@ export async function POST(
       return NextResponse.json(response, { status: 500 });
     }
 
-    // 5. Update verification status in evidence table and collection_requests table
-    const targetStatus = aiResult.decision === 'verified' ? 'verified' : 'rejected';
-    const requestStatus = aiResult.decision === 'verified' ? 'VERIFIED' : 'REJECTED';
+    // 9. Determine final target status based on decision
+    let finalRequestStatus: 'VERIFIED' | 'REJECTED' | 'NEEDS_REVIEW' = 'VERIFIED';
+    if (aiResult.decision === 'rejected') {
+      finalRequestStatus = 'REJECTED';
+    } else if (aiResult.decision === 'inconclusive') {
+      finalRequestStatus = 'NEEDS_REVIEW';
+    }
 
+    const evidenceTargetStatus = finalRequestStatus === 'VERIFIED' ? 'verified' : 'rejected';
+
+    // Update evidence table status
     await supabase
       .from('evidence')
-      .update({ verification_status: targetStatus })
+      .update({ verification_status: evidenceTargetStatus })
       .in('id', [beforeEvidence.id, afterEvidence.id]);
 
+    // Update collection request status via state machine
     await supabase
       .from('collection_requests')
       .update({ 
-        status: requestStatus,
+        status: finalRequestStatus,
         completed_at: new Date().toISOString()
       })
       .eq('id', requestId);
 
-    // 6. Return response formatted as camelCase DTO
+    // 10. Return response formatted as camelCase DTO
     const formattedData: VerificationResultDTO = {
       id: savedVerification.id,
       evidenceId: savedVerification.evidence_id,
@@ -127,7 +194,7 @@ export async function POST(
 
     return NextResponse.json(response, { status: 200 });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[POST /api/verification Unexpected Error]:', err);
     const response: ApiResponse<null> = {
       success: false,
@@ -150,6 +217,12 @@ export async function GET(
   { params }: { params: Promise<{ requestId: string }> }
 ) {
   try {
+    // Authenticate user
+    const { errorResponse } = await getAuthUserAndProfile(request);
+    if (errorResponse) {
+      return errorResponse;
+    }
+
     const { requestId } = await params;
     const supabase = createServerSupabaseClient();
 
@@ -211,7 +284,7 @@ export async function GET(
 
     return NextResponse.json(response, { status: 200 });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[GET /api/verification Error]:', err);
     const response: ApiResponse<null> = {
       success: false,

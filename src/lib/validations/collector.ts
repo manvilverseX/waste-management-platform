@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 export const collectionStatusEnum = z.enum([
   'PENDING',
+  'WASTE_READY',
   'ASSIGNED',
+  'PICKUP_EVIDENCE_SUBMITTED',
+  'VEHICLE_EVIDENCE_SUBMITTED',
+  'VERIFICATION_IN_PROGRESS',
+  'NEEDS_REVIEW',
   'COLLECTED',
   'VERIFIED',
   'REJECTED',
@@ -16,6 +21,7 @@ export const updateCollectionStatusSchema = z.object({
 export const collectionFilterQuerySchema = z.object({
   status: collectionStatusEnum.optional(),
   communityId: z.string().uuid().optional(),
+  collectorId: z.string().uuid().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
   page: z.coerce.number().min(1).default(1)
 });

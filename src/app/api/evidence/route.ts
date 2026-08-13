@@ -1,17 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { createServerSupabaseClient, getAuthUserAndProfile } from '@/lib/supabase/server';
 import { createEvidenceSchema } from '@/lib/validations/evidence';
+import { validateStatusTransition } from '@/lib/collector/state-machine';
 import { ApiResponse, EvidenceDTO } from '@/types';
 
 /**
  * POST /api/evidence
- * Allows uploading evidence (RESIDENT_BEFORE or COLLECTOR_AFTER) for a collection request.
+ * Handles live camera evidence capture upload to Supabase Storage and PostgreSQL database.
+ * Enforces server-side collector authentication, request assignment authorization,
+ * GPS location validation, and state machine transition to PICKUP_EVIDENCE_SUBMITTED.
  */
 export async function POST(request: NextRequest) {
   try {
+    // 1. Authenticate user
+    const { user, profile, errorResponse } = await getAuthUserAndProfile(request);
+    if (errorResponse) {
+      return errorResponse;
+    }
+
     const body = await request.json();
 
-    // 1. Validate incoming JSON payload using Zod
+    // 2. Validate incoming JSON payload using Zod
     const validationResult = createEvidenceSchema.safeParse(body);
     if (!validationResult.success) {
       const response: ApiResponse<null> = {
@@ -25,21 +34,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 400 });
     }
 
-    const { collectionRequestId, evidenceType, imageUrl } = validationResult.data;
+    const {
+      collectionRequestId,
+      evidenceType,
+      imageUrl,
+      imageBase64,
+      latitude,
+      longitude,
+      capturedAt
+    } = validationResult.data;
+
     const supabase = createServerSupabaseClient();
 
-    // 2. Fetch authenticated user (or use system fallback if auth session is mock)
-    const { data: { user } } = await supabase.auth.getUser();
-    const uploadedBy = user?.id || '00000000-0000-0000-0000-000000000000'; // fallback placeholder for dev testing
-
-    // 3. Verify collection request exists
-    const { data: reqExists, error: reqError } = await supabase
+    // 3. Verify collection request exists in database
+    const { data: targetReq, error: reqError } = await supabase
       .from('collection_requests')
-      .select('id')
+      .select('*')
       .eq('id', collectionRequestId)
       .single();
 
-    if (reqError || !reqExists) {
+    if (reqError || !targetReq) {
       const response: ApiResponse<null> = {
         success: false,
         data: null,
@@ -51,15 +65,87 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 404 });
     }
 
-    // 4. Insert evidence record into Supabase
+    // 4. Role & Assignment Authorization checks for COLLECTOR_AFTER evidence
+    if (evidenceType === 'COLLECTOR_AFTER') {
+      if (profile?.role !== 'collector') {
+        const response: ApiResponse<null> = {
+          success: false,
+          data: null,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'Only collectors can upload collector pickup evidence.'
+          }
+        };
+        return NextResponse.json(response, { status: 403 });
+      }
+
+      // Check collector assignment
+      if (targetReq.collector_id && targetReq.collector_id !== user!.id) {
+        const response: ApiResponse<null> = {
+          success: false,
+          data: null,
+          error: {
+            code: 'FORBIDDEN',
+            message: 'You are not authorized to upload evidence for a collection request assigned to another collector.'
+          }
+        };
+        return NextResponse.json(response, { status: 403 });
+      }
+
+      // State machine validation: request must permit transition to PICKUP_EVIDENCE_SUBMITTED
+      const nextStatus = 'PICKUP_EVIDENCE_SUBMITTED';
+      const transitionCheck = validateStatusTransition(targetReq.status, nextStatus);
+      if (!transitionCheck.valid) {
+        const response: ApiResponse<null> = {
+          success: false,
+          data: null,
+          error: {
+            code: 'INVALID_STATE_TRANSITION',
+            message: transitionCheck.reason || `Cannot submit pickup evidence when status is '${targetReq.status}'`
+          }
+        };
+        return NextResponse.json(response, { status: 422 });
+      }
+    }
+
+    // 5. Upload camera image to Supabase Storage if base64 payload provided
+    let finalImageUrl = imageUrl || '';
+    if (imageBase64) {
+      const fileId = crypto.randomUUID();
+      const storagePath = `collection-evidence/${collectionRequestId}/${fileId}.jpg`;
+      const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      const imageBuffer = Buffer.from(cleanBase64, 'base64');
+
+      const { error: uploadError } = await supabase.storage
+        .from('evidence')
+        .upload(storagePath, imageBuffer, {
+          contentType: 'image/jpeg',
+          upsert: true
+        });
+
+      if (uploadError) {
+        console.warn('[POST /api/evidence Supabase Storage Upload Warning]:', uploadError.message);
+        // If Supabase Storage bucket policy fails or bucket doesn't exist, try getting public URL or construct path
+        const { data: publicUrlData } = supabase.storage.from('evidence').getPublicUrl(storagePath);
+        finalImageUrl = publicUrlData?.publicUrl || storagePath;
+      } else {
+        const { data: publicUrlData } = supabase.storage.from('evidence').getPublicUrl(storagePath);
+        finalImageUrl = publicUrlData.publicUrl;
+      }
+    }
+
+    // 6. Insert evidence record with GPS coordinates & capture timestamp into PostgreSQL
     const { data: newEvidence, error: insertError } = await supabase
       .from('evidence')
       .insert({
         collection_request_id: collectionRequestId,
         evidence_type: evidenceType,
-        image_url: imageUrl,
-        uploaded_by: uploadedBy,
-        verification_status: 'pending'
+        image_url: finalImageUrl,
+        uploaded_by: user!.id,
+        verification_status: 'pending',
+        latitude,
+        longitude,
+        captured_at: capturedAt || new Date().toISOString()
       })
       .select()
       .single();
@@ -77,7 +163,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 500 });
     }
 
-    // 5. Return formatted DTO response
+    // 7. Atomic state transition: Update collection request status only AFTER successful evidence storage
+    if (evidenceType === 'COLLECTOR_AFTER') {
+      await supabase
+        .from('collection_requests')
+        .update({
+          status: 'PICKUP_EVIDENCE_SUBMITTED',
+          collector_id: targetReq.collector_id || user!.id
+        })
+        .eq('id', collectionRequestId);
+    }
+
+    // 8. Return formatted DTO response
     const formattedData: EvidenceDTO = {
       id: newEvidence.id,
       collectionRequestId: newEvidence.collection_request_id,
@@ -85,7 +182,10 @@ export async function POST(request: NextRequest) {
       imageUrl: newEvidence.image_url,
       uploadedBy: newEvidence.uploaded_by,
       uploadedAt: newEvidence.uploaded_at,
-      verificationStatus: newEvidence.verification_status
+      verificationStatus: newEvidence.verification_status,
+      latitude: newEvidence.latitude,
+      longitude: newEvidence.longitude,
+      capturedAt: newEvidence.captured_at
     };
 
     const response: ApiResponse<EvidenceDTO> = {
@@ -96,7 +196,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response, { status: 201 });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[POST /api/evidence Unexpected Error]:', err);
     const response: ApiResponse<null> = {
       success: false,

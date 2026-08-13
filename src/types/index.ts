@@ -3,7 +3,12 @@ export type UserRole = 'resident' | 'collector' | 'municipality';
 
 export type CollectionStatus = 
   | 'PENDING' 
+  | 'WASTE_READY'
   | 'ASSIGNED' 
+  | 'PICKUP_EVIDENCE_SUBMITTED'
+  | 'VEHICLE_EVIDENCE_SUBMITTED'
+  | 'VERIFICATION_IN_PROGRESS'
+  | 'NEEDS_REVIEW'
   | 'COLLECTED' 
   | 'VERIFIED' 
   | 'REJECTED' 
@@ -43,6 +48,7 @@ export interface DbCollectionRequest {
   id: string;
   resident_id: string;
   community_id: string;
+  collector_id?: string | null;
   status: CollectionStatus;
   requested_at: string;
   completed_at: string | null;
@@ -56,6 +62,9 @@ export interface DbEvidence {
   uploaded_by: string;
   uploaded_at: string;
   verification_status: VerificationStatus;
+  latitude?: number | null;
+  longitude?: number | null;
+  captured_at?: string | null;
 }
 
 export interface DbVerificationResult {
@@ -72,11 +81,13 @@ export interface CollectionRequestDTO {
   id: string;
   residentId: string;
   communityId: string;
+  collectorId?: string | null;
   status: CollectionStatus;
   requestedAt: string;
   completedAt: string | null;
   residentName?: string;
   communityName?: string;
+  collectorName?: string;
   evidence?: EvidenceDTO[];
 }
 
@@ -88,6 +99,9 @@ export interface EvidenceDTO {
   uploadedBy: string;
   uploadedAt: string;
   verificationStatus: VerificationStatus;
+  latitude?: number | null;
+  longitude?: number | null;
+  capturedAt?: string | null;
 }
 
 export interface VerificationResultDTO {

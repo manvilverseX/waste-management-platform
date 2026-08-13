@@ -68,12 +68,13 @@ Respond ONLY with valid JSON in this exact structure:
         : 50,
       analysis: parsed.analysis || 'Analysis completed by Gemini AI.'
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('[Gemini AI Verification Error]:', error);
     return {
       decision: 'inconclusive',
       confidenceScore: 0,
-      analysis: `AI Analysis failed due to server error: ${error.message || 'Unknown error'}`
+      analysis: `AI Analysis failed due to server error: ${message}`
     };
   }
 }

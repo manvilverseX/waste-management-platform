@@ -1,13 +1,13 @@
 import React from 'react';
 import { CollectionStatus, VerificationStatus } from '@/types';
-import { CheckCircle2, Clock, XCircle, AlertTriangle, Truck, Package } from 'lucide-react';
+import { CheckCircle2, Clock, XCircle, AlertTriangle, Truck, Package, Sparkles } from 'lucide-react';
 
 interface Props {
   status: CollectionStatus | VerificationStatus;
   type?: 'collection' | 'verification';
 }
 
-export const VerificationStatusBadge: React.FC<Props> = ({ status, type = 'collection' }) => {
+export const VerificationStatusBadge: React.FC<Props> = ({ status }) => {
   const getBadgeStyle = () => {
     switch (status) {
       case 'VERIFIED':
@@ -17,11 +17,30 @@ export const VerificationStatusBadge: React.FC<Props> = ({ status, type = 'colle
           icon: <CheckCircle2 className="w-3.5 h-3.5 mr-1" />,
           label: 'Verified'
         };
+      case 'PICKUP_EVIDENCE_SUBMITTED':
       case 'COLLECTED':
         return {
           bg: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20',
           icon: <Package className="w-3.5 h-3.5 mr-1" />,
-          label: 'Collected'
+          label: 'Pickup Evidence Submitted'
+        };
+      case 'VEHICLE_EVIDENCE_SUBMITTED':
+        return {
+          bg: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20',
+          icon: <Truck className="w-3.5 h-3.5 mr-1" />,
+          label: 'Vehicle Evidence Submitted'
+        };
+      case 'VERIFICATION_IN_PROGRESS':
+        return {
+          bg: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
+          icon: <Sparkles className="w-3.5 h-3.5 mr-1 animate-pulse text-purple-500" />,
+          label: 'Verification in Progress'
+        };
+      case 'NEEDS_REVIEW':
+        return {
+          bg: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+          icon: <AlertTriangle className="w-3.5 h-3.5 mr-1" />,
+          label: 'Needs Review'
         };
       case 'ASSIGNED':
         return {
@@ -29,12 +48,13 @@ export const VerificationStatusBadge: React.FC<Props> = ({ status, type = 'colle
           icon: <Truck className="w-3.5 h-3.5 mr-1" />,
           label: 'Assigned'
         };
+      case 'WASTE_READY':
       case 'PENDING':
       case 'pending':
         return {
-          bg: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+          bg: 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20',
           icon: <Clock className="w-3.5 h-3.5 mr-1" />,
-          label: 'Pending'
+          label: status === 'WASTE_READY' ? 'Waste Ready' : 'Pending'
         };
       case 'REJECTED':
       case 'rejected':
