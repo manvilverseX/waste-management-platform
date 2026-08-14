@@ -19,7 +19,7 @@ import {
 import { RequestCollectionForm } from './RequestCollectionForm';
 import { RecentRequestsList } from './RecentRequestsList';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
-import { RewardTransactionDTO, RewardSummaryDTO } from '@/types';
+import { RewardTransactionDTO, RewardSummaryDTO, CommunityProfileDTO, CommunityScorecardDTO } from '@/types';
 
 // Mock data for UI representation
 const MOCK_PROFILE = {
@@ -29,32 +29,26 @@ const MOCK_PROFILE = {
   joinedAt: 'August 2026'
 };
 
-const MOCK_COMMUNITY = {
-  name: 'Greenfield Eco Valley',
-  address: 'Sector 4, Eco Enclave, Bengaluru, 560102',
-  membersCount: 142
-};
-
-const MOCK_COMMUNITY_SCORE = {
-  currentScore: 84,
-  period: '2026-W33',
-  grade: 'A',
-  trend: 'up',
-  weeklyTarget: 90,
-  breakdown: {
-    segregation: 90,
-    participation: 78,
-    cleanliness: 86
-  }
-};
 
 export const ResidentDashboard: React.FC = () => {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community'>('overview');
   const [transactions, setTransactions] = useState<RewardTransactionDTO[]>([]);
   const [summary, setSummary] = useState<RewardSummaryDTO | null>(null);
+  const [community, setCommunity] = useState<CommunityProfileDTO | null>(null);
+  const [scorecard, setScorecard] = useState<CommunityScorecardDTO | null>(null);
   const [loadingTransactions, setLoadingTransactions] = useState(true);
   const [loadingSummary, setLoadingSummary] = useState(true);
+  const [loadingCommunity, setLoadingCommunity] = useState(true);
+  const [loadingScorecard, setLoadingScorecard] = useState(true);
+
+  const getGrade = (score: number) => {
+    if (score >= 90) return 'A+';
+    if (score >= 80) return 'A';
+    if (score >= 70) return 'B';
+    if (score >= 60) return 'C';
+    return 'D';
+  };
 
   useEffect(() => {
     const initAuthAndFetch = async () => {
@@ -119,10 +113,53 @@ export const ResidentDashboard: React.FC = () => {
           setLoadingSummary(false);
         });
 
-        await Promise.all([fetchTxPromise, fetchSummaryPromise]);
+        // Fetch community profile in background
+        const fetchCommunityPromise = fetch('/api/communities/profile', {
+          headers: {
+            'Authorization': `Bearer ${currentSession.access_token}`
+          }
+        }).then(async (res) => {
+          if (res.ok) {
+            const result = await res.json();
+            setCommunity(result.data || null);
+          } else {
+            console.error('Failed to fetch community profile:', res.status);
+          }
+        }).catch((err) => {
+          console.error('Error fetching community profile:', err);
+        }).finally(() => {
+          setLoadingCommunity(false);
+        });
+
+        // Fetch community scorecard in background
+        const fetchScorecardPromise = fetch('/api/communities/scorecard', {
+          headers: {
+            'Authorization': `Bearer ${currentSession.access_token}`
+          }
+        }).then(async (res) => {
+          if (res.ok) {
+            const result = await res.json();
+            setScorecard(result.data || null);
+          } else {
+            console.error('Failed to fetch community scorecard:', res.status);
+          }
+        }).catch((err) => {
+          console.error('Error fetching community scorecard:', err);
+        }).finally(() => {
+          setLoadingScorecard(false);
+        });
+
+        await Promise.all([
+          fetchTxPromise,
+          fetchSummaryPromise,
+          fetchCommunityPromise,
+          fetchScorecardPromise
+        ]);
       } else {
         setLoadingTransactions(false);
         setLoadingSummary(false);
+        setLoadingCommunity(false);
+        setLoadingScorecard(false);
       }
     };
 
@@ -172,7 +209,7 @@ export const ResidentDashboard: React.FC = () => {
                   {MOCK_PROFILE.name}
                 </h1>
                 <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-                  Community Resident at <strong className="font-semibold text-slate-700 dark:text-slate-300">{MOCK_COMMUNITY.name}</strong>
+                  Community Resident at <strong className="font-semibold text-slate-700 dark:text-slate-300">{loadingCommunity ? '...' : (community?.name || 'My Community')}</strong>
                 </p>
               </div>
               <button
@@ -190,7 +227,7 @@ export const ResidentDashboard: React.FC = () => {
                 <span className="text-xs text-slate-400 dark:text-slate-500 block">Community</span>
                 <span className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 mt-0.5">
                   <MapPin className="w-3.5 h-3.5 text-emerald-500" />
-                  Sector 4
+                  {loadingCommunity ? '...' : (community?.name || 'Sector 4')}
                 </span>
               </div>
               <div>
@@ -204,7 +241,7 @@ export const ResidentDashboard: React.FC = () => {
                 <span className="text-xs text-slate-400 dark:text-slate-500 block">Community Score</span>
                 <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 mt-0.5">
                   <Trophy className="w-3.5 h-3.5" />
-                  {MOCK_COMMUNITY_SCORE.currentScore}/100 Grade {MOCK_COMMUNITY_SCORE.grade}
+                  {loadingScorecard ? '...' : scorecard ? `${scorecard.score}/100 Grade ${getGrade(scorecard.score)}` : 'No Score'}
                 </span>
               </div>
             </div>
@@ -289,14 +326,14 @@ export const ResidentDashboard: React.FC = () => {
                       <div className="flex items-center gap-2.5">
                         <MapPin className="w-5 h-5 text-emerald-500 shrink-0" />
                         <div>
-                          <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">{MOCK_COMMUNITY.name}</h4>
-                          <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">{MOCK_COMMUNITY.address}</p>
+                          <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">{loadingCommunity ? '...' : (community?.name || 'My Community')}</h4>
+                          <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">{loadingCommunity ? '...' : (community?.address || '')}</p>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1">
                       <span>Total Active Members</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{MOCK_COMMUNITY.membersCount} residents</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-200">{loadingCommunity ? '...' : (community?.membersCount || 0)} residents</span>
                     </div>
                   </div>
                 </div>
@@ -340,7 +377,7 @@ export const ResidentDashboard: React.FC = () => {
                   <span className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tight">
                     {loadingSummary ? '...' : (summary?.rank ? `#${summary.rank}` : 'N/A')}
                   </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400 block mt-1">Out of {MOCK_COMMUNITY.membersCount} residents</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400 block mt-1">Out of {loadingCommunity ? '...' : (community?.membersCount || 0)} residents</span>
                 </div>
                 <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
                   <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
@@ -390,25 +427,31 @@ export const ResidentDashboard: React.FC = () => {
                 <div className="flex items-center justify-between mb-6">
                   <div>
                     <span className="text-2xs font-bold text-slate-400 uppercase tracking-wider">Current Period Score</span>
-                    <h3 className="text-2xl font-extrabold mt-1">{MOCK_COMMUNITY.name}</h3>
+                    <h3 className="text-2xl font-extrabold mt-1">{loadingCommunity ? '...' : (community?.name || 'My Community')}</h3>
                   </div>
                   <div className="h-14 w-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                    <span className="text-2xl font-black text-emerald-400">{MOCK_COMMUNITY_SCORE.grade}</span>
+                    <span className="text-2xl font-black text-emerald-400">
+                      {loadingScorecard ? '...' : scorecard ? getGrade(scorecard.score) : '—'}
+                    </span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-6 py-6 border-t border-slate-800">
                   <div>
                     <span className="text-xs text-slate-500 block">Active Score</span>
-                    <span className="text-3xl font-extrabold text-emerald-400 mt-1">{MOCK_COMMUNITY_SCORE.currentScore}/100</span>
+                    <span className="text-3xl font-extrabold text-emerald-400 mt-1">
+                      {loadingScorecard ? '...' : scorecard ? `${scorecard.score}/100` : '—'}
+                    </span>
                   </div>
                   <div>
                     <span className="text-xs text-slate-500 block">Weekly Target</span>
-                    <span className="text-3xl font-extrabold text-slate-300 mt-1">{MOCK_COMMUNITY_SCORE.weeklyTarget}</span>
+                    <span className="text-3xl font-extrabold text-slate-300 mt-1">90</span>
                   </div>
                   <div className="col-span-2 md:col-span-1">
                     <span className="text-xs text-slate-500 block">Period</span>
-                    <span className="text-3xl font-extrabold text-indigo-400 mt-1">{MOCK_COMMUNITY_SCORE.period}</span>
+                    <span className="text-3xl font-extrabold text-indigo-400 mt-1">
+                      {loadingScorecard ? '...' : scorecard ? scorecard.period : '—'}
+                    </span>
                   </div>
                 </div>
 
@@ -416,12 +459,14 @@ export const ResidentDashboard: React.FC = () => {
                 <div className="mt-4 space-y-1.5">
                   <div className="flex justify-between text-xs">
                     <span className="text-slate-400">Target progress</span>
-                    <span className="text-emerald-400 font-bold">{MOCK_COMMUNITY_SCORE.currentScore}% of target</span>
+                    <span className="text-emerald-400 font-bold">
+                      {loadingScorecard ? '...' : scorecard ? `${scorecard.score}% of target` : '0% of target'}
+                    </span>
                   </div>
                   <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full" 
-                      style={{ width: `${MOCK_COMMUNITY_SCORE.currentScore}%` }}
+                      style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.score : 0}%` }}
                     ></div>
                   </div>
                 </div>
@@ -434,28 +479,34 @@ export const ResidentDashboard: React.FC = () => {
                   <div>
                     <div className="flex justify-between text-xs font-bold mb-1">
                       <span>Waste Segregation Ratio</span>
-                      <span className="text-emerald-600 dark:text-emerald-400">{MOCK_COMMUNITY_SCORE.breakdown.segregation}%</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        {loadingScorecard ? '...' : scorecard ? `${scorecard.breakdown.segregation}%` : '—'}
+                      </span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${MOCK_COMMUNITY_SCORE.breakdown.segregation}%` }}></div>
+                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.breakdown.segregation : 0}%` }}></div>
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between text-xs font-bold mb-1">
                       <span>Resident Participation</span>
-                      <span className="text-amber-600 dark:text-amber-400">{MOCK_COMMUNITY_SCORE.breakdown.participation}%</span>
+                      <span className="text-amber-600 dark:text-amber-400">
+                        {loadingScorecard ? '...' : scorecard ? `${scorecard.breakdown.participation}%` : '—'}
+                      </span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-amber-500 rounded-full" style={{ width: `${MOCK_COMMUNITY_SCORE.breakdown.participation}%` }}></div>
+                      <div className="h-full bg-amber-500 rounded-full" style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.breakdown.participation : 0}%` }}></div>
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between text-xs font-bold mb-1">
                       <span>Cleanliness Index</span>
-                      <span className="text-indigo-600 dark:text-indigo-400">{MOCK_COMMUNITY_SCORE.breakdown.cleanliness}%</span>
+                      <span className="text-indigo-600 dark:text-indigo-400">
+                        {loadingScorecard ? '...' : scorecard ? `${scorecard.breakdown.cleanliness}%` : '—'}
+                      </span>
                     </div>
                     <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${MOCK_COMMUNITY_SCORE.breakdown.cleanliness}%` }}></div>
+                      <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.breakdown.cleanliness : 0}%` }}></div>
                     </div>
                   </div>
                 </div>

@@ -56,3 +56,24 @@ export interface RewardSummaryDTO {
   lifetimePoints: number;
   rank: number | null;
 }
+
+export interface CommunityProfileDTO {
+  id: string;
+  name: string;
+  address: string;
+  membersCount: number;
+}
+
+export interface CommunityScorecardDTO {
+  id: string;
+  communityId: string;
+  score: number;
+  period: string;
+  breakdown: {
+    segregation: number;
+    participation: number;
+    cleanliness: number;
+  };
+  calculatedAt: string;
+}
+
