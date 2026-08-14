@@ -12,3 +12,14 @@ export const geminiAnalysisResponseSchema = z.object({
 });
 
 export type GeminiAnalysisResponseInput = z.infer<typeof geminiAnalysisResponseSchema>;
+
+export const manualReviewDecisionSchema = z.object({
+  decision: z.enum(['APPROVE', 'REJECT']),
+  reason: z
+    .string()
+    .trim()
+    .min(3, 'Manual review reason must be at least 3 characters long.')
+    .max(1000, 'Reason cannot exceed 1000 characters.')
+});
+
+export type ManualReviewDecisionInput = z.infer<typeof manualReviewDecisionSchema>;
