@@ -77,3 +77,16 @@ export interface CommunityScorecardDTO {
   calculatedAt: string;
 }
 
+export interface DumpingReportDTO {
+  id: string;
+  reportedBy: string;
+  communityId: string;
+  imageUrl: string;
+  latitude: number;
+  longitude: number;
+  description: string;
+  status: 'reported' | 'investigating' | 'cleared' | 'rejected';
+  reportedAt: string;
+}
+
+
