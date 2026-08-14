@@ -111,6 +111,10 @@ export interface DbVerificationResult {
   hard_evidence_checks?: HardEvidenceCheck[];
   ai_analysis_details?: StructuredGeminiAnalysis;
   reason?: string;
+  manual_decision?: string | null;
+  manual_reason?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
   verified_at: string;
 }
 
@@ -166,7 +170,103 @@ export interface VerificationResultDTO {
   hardEvidenceChecks?: HardEvidenceCheck[];
   aiAnalysisDetails?: StructuredGeminiAnalysis;
   reason?: string;
+  manualDecision?: string | null;
+  manualReason?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
   verifiedAt: string;
+}
+
+export interface ReviewQueueItemDTO {
+  requestId: string;
+  residentName?: string;
+  communityName?: string;
+  collectorName?: string;
+  collectionBatchId?: string | null;
+  status: CollectionStatus;
+  requestedAt: string;
+  automaticDecision?: string;
+  confidenceScore?: number;
+  reason?: string;
+}
+
+export interface ReviewDetailDTO {
+  request: CollectionRequestDTO;
+  batch?: CollectionBatchDTO | null;
+  beforeEvidence?: EvidenceDTO | null;
+  afterEvidence?: EvidenceDTO | null;
+  vehicleEvidence?: EvidenceDTO | null;
+  hardEvidenceChecks?: HardEvidenceCheck[];
+  aiAnalysisDetails?: StructuredGeminiAnalysis;
+  automaticDecision?: string;
+  automaticReason?: string;
+  confidenceScore?: number;
+  latestResult?: VerificationResultDTO | null;
+}
+
+// Collector Metrics DTOs
+export interface MetricPeriodDTO {
+  range: 'today' | '7d' | '30d' | 'all' | 'custom';
+  from: string | null;
+  to: string | null;
+}
+
+export interface CollectionMetricsDTO {
+  assigned: number;
+  completed: number;
+  active: number;
+  cancelled: number;
+  completionRate: number;
+}
+
+export interface VerificationMetricsDTO {
+  verified: number;
+  rejected: number;
+  needsReview: number;
+  automaticVerified: number;
+  automaticNeedsReview: number;
+  automaticRejected: number;
+  verificationSuccessRate: number;
+  rejectionRate: number;
+  reviewRate: number;
+}
+
+export interface ManualReviewMetricsDTO {
+  reviewsCompleted: number;
+  reviewsPending: number;
+  manualApprovalCount: number;
+  manualRejectionCount: number;
+  manualApprovalRate: number;
+}
+
+export interface EvidenceMetricsDTO {
+  pickupSubmitted: number;
+  vehicleSubmitted: number;
+  complianceRate: number;
+}
+
+export interface BatchMetricsDTO {
+  created: number;
+  completed: number;
+  active: number;
+  averageRequestsPerBatch: number;
+}
+
+export interface TimingMetricsDTO {
+  averageAssignmentToPickupMinutes: number | null;
+  averagePickupToVehicleMinutes: number | null;
+  averageVehicleToVerificationMinutes: number | null;
+  averageOverallCompletionMinutes: number | null;
+}
+
+export interface CollectorMetricsDTO {
+  period: MetricPeriodDTO;
+  collections: CollectionMetricsDTO;
+  verification: VerificationMetricsDTO;
+  review: ManualReviewMetricsDTO;
+  evidence: EvidenceMetricsDTO;
+  batches: BatchMetricsDTO;
+  timing: TimingMetricsDTO;
 }
 
 // Standard API Response Wrappers
@@ -178,3 +278,4 @@ export interface ApiResponse<T> {
     message: string;
   } | null;
 }
+

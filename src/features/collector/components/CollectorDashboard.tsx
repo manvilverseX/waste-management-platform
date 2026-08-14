@@ -1,10 +1,27 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { CollectionBatchDTO, CollectionRequestDTO } from '@/types';
+import { CollectionBatchDTO, CollectionRequestDTO, CollectorMetricsDTO } from '@/types';
 import { CollectionRequestCard } from './CollectionRequestCard';
 import { EvidenceUploadModal } from './EvidenceUploadModal';
-import { Truck, RefreshCw, Layers, CheckCircle2, Clock, PackageCheck, Filter, AlertTriangle, Plus, Camera, Check } from 'lucide-react';
+import { ReviewQueueModal } from '@/features/verification/components/ReviewQueueModal';
+import {
+  Truck,
+  RefreshCw,
+  Layers,
+  CheckCircle2,
+  PackageCheck,
+  Filter,
+  AlertTriangle,
+  Plus,
+  Camera,
+  Check,
+  ShieldCheck,
+  BarChart3,
+  Calendar,
+  FileCheck,
+  Timer,
+} from 'lucide-react';
 
 export const CollectorDashboard: React.FC = () => {
   const [requests, setRequests] = useState<CollectionRequestDTO[]>([]);
@@ -16,8 +33,38 @@ export const CollectorDashboard: React.FC = () => {
   const [isCreatingBatch, setIsCreatingBatch] = useState(false);
   const [isAddingToBatch, setIsAddingToBatch] = useState(false);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
+  const [isReviewQueueOpen, setIsReviewQueueOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>('ALL');
+
+  // Metrics State
+  const [metrics, setMetrics] = useState<CollectorMetricsDTO | null>(null);
+  const [metricsLoading, setMetricsLoading] = useState(true);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [metricsRange, setMetricsRange] = useState<'today' | '7d' | '30d' | 'all'>('7d');
+
+  // Fetch Collector Performance Metrics
+  const fetchMetrics = useCallback(async (range = metricsRange) => {
+    setMetricsLoading(true);
+    setMetricsError(null);
+    try {
+      const res = await fetch(`/api/collector/metrics?range=${range}`);
+      const json = await res.json();
+      if (json.success && json.data) {
+        setMetrics(json.data);
+      } else {
+        setMetrics(null);
+        setMetricsError(json.error?.message || 'Unable to load performance metrics.');
+      }
+    } catch (err: unknown) {
+      console.error('Failed to fetch metrics:', err);
+      const msg = err instanceof Error ? err.message : 'Unable to load performance metrics.';
+      setMetricsError(msg);
+      setMetrics(null);
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, [metricsRange]);
 
   // Fetch Collection Requests
   const fetchRequests = useCallback(async () => {
@@ -44,7 +91,7 @@ export const CollectorDashboard: React.FC = () => {
       const msg = err instanceof Error ? err.message : 'Failed to fetch collection requests';
       setErrorMessage(msg);
       setRequests([]);
-    } flex: {
+    } finally {
       setLoading(false);
     }
   }, [activeFilter]);
@@ -70,7 +117,8 @@ export const CollectorDashboard: React.FC = () => {
   const refreshAll = useCallback(() => {
     fetchRequests();
     fetchBatches();
-  }, [fetchRequests, fetchBatches]);
+    fetchMetrics(metricsRange);
+  }, [fetchRequests, fetchBatches, fetchMetrics, metricsRange]);
 
   useEffect(() => {
     let ignore = false;
@@ -80,13 +128,15 @@ export const CollectorDashboard: React.FC = () => {
           ? '/api/collection-requests' 
           : `/api/collection-requests?status=${activeFilter}`;
 
-        const [reqRes, batchRes] = await Promise.all([
+        const [reqRes, batchRes, metricsRes] = await Promise.all([
           fetch(url),
-          fetch('/api/collection-batches')
+          fetch('/api/collection-batches'),
+          fetch(`/api/collector/metrics?range=${metricsRange}`)
         ]);
 
         const reqJson = await reqRes.json();
         const batchJson = await batchRes.json();
+        const metricsJson = await metricsRes.json();
 
         if (!ignore) {
           if (reqJson.success && Array.isArray(reqJson.data)) {
@@ -99,7 +149,15 @@ export const CollectorDashboard: React.FC = () => {
             );
             setActiveBatch(currentActive || null);
           }
+          if (metricsJson.success && metricsJson.data) {
+            setMetrics(metricsJson.data);
+            setMetricsError(null);
+          } else {
+            setMetrics(null);
+            setMetricsError(metricsJson.error?.message || 'Unable to load performance metrics.');
+          }
           setLoading(false);
+          setMetricsLoading(false);
         }
       } catch (err: unknown) {
         if (!ignore) {
@@ -107,6 +165,7 @@ export const CollectorDashboard: React.FC = () => {
           const msg = err instanceof Error ? err.message : 'Failed to fetch dashboard data';
           setErrorMessage(msg);
           setLoading(false);
+          setMetricsLoading(false);
         }
       }
     };
@@ -116,7 +175,7 @@ export const CollectorDashboard: React.FC = () => {
     return () => {
       ignore = true;
     };
-  }, [activeFilter]);
+  }, [activeFilter, metricsRange]);
 
   // Create Collection Batch Handler
   const handleCreateBatch = async () => {
@@ -179,11 +238,10 @@ export const CollectorDashboard: React.FC = () => {
     }
   };
 
-  // Statistics calculation
-  const totalCount = requests.length;
-  const pendingCount = requests.filter(r => r.status === 'PENDING' || r.status === 'WASTE_READY').length;
-  const assignedCount = requests.filter(r => r.status === 'ASSIGNED').length;
-  const verifiedCount = requests.filter(r => r.status === 'VERIFIED').length;
+  const handleRangeChange = (range: 'today' | '7d' | '30d' | 'all') => {
+    setMetricsRange(range);
+  };
+
   const eligibleForBatchRequests = requests.filter(r => (r.status === 'PICKUP_EVIDENCE_SUBMITTED' || r.status === 'COLLECTED') && !r.collectionBatchId);
 
   return (
@@ -196,18 +254,28 @@ export const CollectorDashboard: React.FC = () => {
             Collector Dashboard
           </h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">
-            Manage authorized collection runs, batch household evidence, and upload vehicle proof.
+            Manage authorized collection runs, batch household evidence, and track performance metrics.
           </p>
         </div>
 
-        <button
-          onClick={refreshAll}
-          disabled={loading}
-          className="self-start md:self-auto px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 shadow-xs transition-colors"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3 self-start md:self-auto">
+          <button
+            onClick={() => setIsReviewQueueOpen(true)}
+            className="px-4 py-2 text-sm font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-xl hover:bg-amber-500/20 flex items-center gap-2 shadow-xs transition-colors"
+          >
+            <ShieldCheck className="w-4 h-4 text-amber-400" />
+            Review Queue (NEEDS_REVIEW)
+          </button>
+
+          <button
+            onClick={refreshAll}
+            disabled={loading || metricsLoading}
+            className="px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2 shadow-xs transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading || metricsLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {errorMessage && (
@@ -279,39 +347,189 @@ export const CollectorDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-400">Total Requests</span>
-            <Layers className="w-5 h-5 text-blue-500" />
+      {/* Collector Performance & Operational Metrics Panel */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-xs space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+          <div>
+            <h2 className="text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-emerald-600" />
+              Collector Performance & Operational Metrics
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Descriptive metrics derived strictly from actual platform activity.
+            </p>
           </div>
-          <p className="text-2xl font-black text-slate-900 dark:text-white mt-2">{totalCount}</p>
+
+          {/* Date Range Selector */}
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl shrink-0">
+            <Calendar className="w-4 h-4 text-slate-400 ml-2 mr-1" />
+            {[
+              { id: 'today', label: 'TODAY' },
+              { id: '7d', label: '7 DAYS' },
+              { id: '30d', label: '30 DAYS' },
+              { id: 'all', label: 'ALL TIME' },
+            ].map((r) => (
+              <button
+                key={r.id}
+                onClick={() => handleRangeChange(r.id as 'today' | '7d' | '30d' | 'all')}
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                  metricsRange === r.id
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-400">Pending / Ready</span>
-            <Clock className="w-5 h-5 text-amber-500" />
+        {/* Metrics Content States */}
+        {metricsLoading ? (
+          <div className="py-8 text-center text-slate-400">
+            <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-500" />
+            <p className="text-xs">Loading performance metrics...</p>
           </div>
-          <p className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-2">{pendingCount}</p>
-        </div>
+        ) : metricsError ? (
+          <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400 flex items-center gap-2 text-xs">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{metricsError}</span>
+          </div>
+        ) : !metrics || (metrics.collections.assigned === 0 && metrics.batches.created === 0) ? (
+          <div className="py-8 text-center text-slate-400 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+            <PackageCheck className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+            <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">No collection activity for this period.</p>
+            <p className="text-xs text-slate-400 mt-0.5">Try selecting a broader date range or completing collection tasks.</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {/* Grid of Key Performance Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+              {/* Card 1: Total Assigned & Completion Rate */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between text-slate-400 mb-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Collections</span>
+                  <Layers className="w-4 h-4 text-blue-500" />
+                </div>
+                <div className="text-xl font-black text-slate-900 dark:text-white">
+                  {metrics.collections.completed} <span className="text-xs font-normal text-slate-400">/ {metrics.collections.assigned}</span>
+                </div>
+                <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mt-1">
+                  {Math.round(metrics.collections.completionRate * 100)}% Completion Rate
+                </div>
+              </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-400">Assigned</span>
-            <Truck className="w-5 h-5 text-indigo-500" />
-          </div>
-          <p className="text-2xl font-black text-indigo-600 dark:text-indigo-400 mt-2">{assignedCount}</p>
-        </div>
+              {/* Card 2: Verification Success */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between text-slate-400 mb-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Verification Rate</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                </div>
+                <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+                  {Math.round(metrics.verification.verificationSuccessRate * 100)}%
+                </div>
+                <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1">
+                  {metrics.verification.verified} Verified | {metrics.verification.rejected} Rejected
+                </div>
+              </div>
 
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-400">Verified</span>
-            <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+              {/* Card 3: Needs Review */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between text-slate-400 mb-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Needs Review</span>
+                  <ShieldCheck className="w-4 h-4 text-amber-500" />
+                </div>
+                <div className="text-xl font-black text-amber-600 dark:text-amber-400">
+                  {metrics.verification.needsReview}
+                </div>
+                <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1">
+                  {Math.round(metrics.verification.reviewRate * 100)}% Manual Review Rate
+                </div>
+              </div>
+
+              {/* Card 4: Manual Review Outcomes */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between text-slate-400 mb-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Manual Reviews</span>
+                  <FileCheck className="w-4 h-4 text-indigo-500" />
+                </div>
+                <div className="text-xl font-black text-indigo-600 dark:text-indigo-400">
+                  {metrics.review.reviewsCompleted}
+                </div>
+                <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1">
+                  {metrics.review.manualApprovalCount} Approved | {metrics.review.manualRejectionCount} Rejected
+                </div>
+              </div>
+
+              {/* Card 5: Collection Batches */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between text-slate-400 mb-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Batches</span>
+                  <Truck className="w-4 h-4 text-purple-500" />
+                </div>
+                <div className="text-xl font-black text-purple-600 dark:text-purple-400">
+                  {metrics.batches.created}
+                </div>
+                <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1">
+                  Avg {metrics.batches.averageRequestsPerBatch} reqs / completed batch
+                </div>
+              </div>
+
+              {/* Card 6: Evidence Compliance */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between text-slate-400 mb-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider">Evidence Compliance</span>
+                  <Camera className="w-4 h-4 text-teal-500" />
+                </div>
+                <div className="text-xl font-black text-teal-600 dark:text-teal-400">
+                  {Math.round(metrics.evidence.complianceRate * 100)}%
+                </div>
+                <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-1">
+                  {metrics.evidence.pickupSubmitted} Pickup | {metrics.evidence.vehicleSubmitted} Vehicle
+                </div>
+              </div>
+            </div>
+
+            {/* Timing Operational Metrics Breakdown */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+              <div className="flex items-center gap-3 p-3 bg-slate-50/70 dark:bg-slate-800/40 rounded-xl">
+                <Timer className="w-5 h-5 text-indigo-500 shrink-0" />
+                <div>
+                  <span className="text-slate-400 font-medium block">Avg Pickup → Vehicle Evidence</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                    {metrics.timing.averagePickupToVehicleMinutes !== null
+                      ? `${metrics.timing.averagePickupToVehicleMinutes} minutes`
+                      : 'N/A (Insufficient data)'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3 bg-slate-50/70 dark:bg-slate-800/40 rounded-xl">
+                <Timer className="w-5 h-5 text-emerald-500 shrink-0" />
+                <div>
+                  <span className="text-slate-400 font-medium block">Avg Vehicle → Verification Result</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                    {metrics.timing.averageVehicleToVerificationMinutes !== null
+                      ? `${metrics.timing.averageVehicleToVerificationMinutes} minutes`
+                      : 'N/A (Insufficient data)'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 p-3 bg-slate-50/70 dark:bg-slate-800/40 rounded-xl">
+                <Timer className="w-5 h-5 text-purple-500 shrink-0" />
+                <div>
+                  <span className="text-slate-400 font-medium block">Avg Overall Collection Duration</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                    {metrics.timing.averageOverallCompletionMinutes !== null
+                      ? `${metrics.timing.averageOverallCompletionMinutes} minutes`
+                      : 'N/A (Insufficient data)'}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
-          <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-2">{verifiedCount}</p>
-        </div>
+        )}
       </div>
 
       {/* Filter Tabs */}
@@ -376,6 +594,13 @@ export const CollectorDashboard: React.FC = () => {
           }}
         />
       )}
+
+      {/* Manual Review Queue Modal */}
+      <ReviewQueueModal
+        isOpen={isReviewQueueOpen}
+        onClose={() => setIsReviewQueueOpen(false)}
+        onQueueUpdated={refreshAll}
+      />
     </div>
   );
 };
