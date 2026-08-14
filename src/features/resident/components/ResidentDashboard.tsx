@@ -13,11 +13,13 @@ import {
   Award,
   Sparkles,
   TrendingUp,
-  Leaf
+  Leaf,
+  Loader2
 } from 'lucide-react';
 import { RequestCollectionForm } from './RequestCollectionForm';
 import { RecentRequestsList } from './RecentRequestsList';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
+import { RewardTransactionDTO } from '@/types';
 
 // Mock data for UI representation
 const MOCK_PROFILE = {
@@ -60,32 +62,60 @@ const MOCK_COMMUNITY_SCORE = {
 export const ResidentDashboard: React.FC = () => {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community'>('overview');
+  const [transactions, setTransactions] = useState<RewardTransactionDTO[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(true);
 
   useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      supabaseBrowserClient.auth.getSession().then(async ({ data: { session } }) => {
-        if (!session) {
-          try {
-            console.log('Attempting developer auto-sign-in...');
-            const res = await fetch('/api/dev-login', { method: 'POST' });
-            if (res.ok) {
-              const { accessToken, refreshToken } = await res.json();
-              await supabaseBrowserClient.auth.setSession({
-                access_token: accessToken,
-                refresh_token: refreshToken
-              });
-              console.log('Developer auto-sign-in successful.');
-            } else {
-              console.error('Developer auto-sign-in endpoint returned error status:', res.status);
-            }
-          } catch (e) {
-            console.error('Developer auto-sign-in failed:', e);
+    const initAuthAndFetch = async () => {
+      let currentSession = null;
+      try {
+        const { data: { session: existingSession } } = await supabaseBrowserClient.auth.getSession();
+        currentSession = existingSession;
+
+        if (!currentSession && process.env.NODE_ENV === 'development') {
+          console.log('Attempting developer auto-sign-in...');
+          const res = await fetch('/api/dev-login', { method: 'POST' });
+          if (res.ok) {
+            const { accessToken, refreshToken } = await res.json();
+            const { data: { session: newSession } } = await supabaseBrowserClient.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken
+            });
+            currentSession = newSession;
+            console.log('Developer auto-sign-in successful.');
+          } else {
+            console.error('Developer auto-sign-in endpoint returned error status:', res.status);
           }
-        } else {
-          console.log('Developer session already active.');
         }
-      });
-    }
+      } catch (e) {
+        console.error('Auth check / dev login failed:', e);
+      }
+
+      if (currentSession) {
+        try {
+          setLoadingTransactions(true);
+          const res = await fetch('/api/rewards', {
+            headers: {
+              'Authorization': `Bearer ${currentSession.access_token}`
+            }
+          });
+          if (res.ok) {
+            const result = await res.json();
+            setTransactions(result.data || []);
+          } else {
+            console.error('Failed to fetch rewards:', res.status);
+          }
+        } catch (err) {
+          console.error('Error fetching rewards:', err);
+        } finally {
+          setLoadingTransactions(false);
+        }
+      } else {
+        setLoadingTransactions(false);
+      }
+    };
+
+    initAuthAndFetch();
   }, []);
 
   return (
@@ -305,17 +335,31 @@ export const ResidentDashboard: React.FC = () => {
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xs">
                 <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Recent Transactions</h3>
                 <div className="space-y-3.5">
-                  {MOCK_REWARDS.recentTransactions.map((tx) => (
-                    <div key={tx.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-50 dark:border-slate-800/80 last:border-b-0">
-                      <div>
-                        <span className="font-bold text-slate-800 dark:text-slate-200 block">{tx.reason}</span>
-                        <span className="text-slate-400 block mt-0.5">{tx.date}</span>
-                      </div>
-                      <span className="font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
-                        +{tx.points}
-                      </span>
+                  {loadingTransactions ? (
+                    <div className="flex flex-col items-center justify-center py-6 text-slate-500 gap-2">
+                      <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+                      <span className="text-2xs">Loading transactions...</span>
                     </div>
-                  ))}
+                  ) : transactions.length === 0 ? (
+                    <div className="text-center py-6 text-slate-450 dark:text-slate-500">
+                      <p className="text-xs font-semibold">No transactions found</p>
+                      <p className="text-2xs mt-0.5">Your points history will appear here.</p>
+                    </div>
+                  ) : (
+                    transactions.map((tx) => (
+                      <div key={tx.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-50 dark:border-slate-800/80 last:border-b-0">
+                        <div>
+                          <span className="font-bold text-slate-800 dark:text-slate-200 block">{tx.reason}</span>
+                          <span className="text-slate-400 block mt-0.5">
+                            {new Date(tx.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                          +{tx.points}
+                        </span>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>

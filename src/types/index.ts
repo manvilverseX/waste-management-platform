@@ -42,4 +42,17 @@ export interface EvidenceDTO {
   verificationStatus: VerificationStatus;
 }
 
+export interface RewardTransactionDTO {
+  id: string;
+  points: number;
+  reason: string;
+  referenceType: string;
+  referenceId?: string | null;
+  createdAt: string;
+}
 
+export interface RewardSummaryDTO {
+  balancePoints: number;
+  lifetimePoints: number;
+  rank: number | null;
+}
