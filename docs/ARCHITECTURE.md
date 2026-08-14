@@ -184,9 +184,22 @@ Any new entity, field, relationship, or major schema change must first be discus
 * POST `/api/evidence`
 * GET `/api/evidence/:id`
 
-### Verification
+### Collection Batches (Person 2)
+* POST `/api/collection-batches`
+* GET `/api/collection-batches`
+* GET `/api/collection-batches/:batchId`
+* POST `/api/collection-batches/:batchId/requests`
+* POST `/api/collection-batches/:batchId/vehicle-evidence`
+
+### Verification & Manual Review (Person 2)
 * POST `/api/verification/:requestId`
 * GET `/api/verification/:requestId`
+* GET `/api/verification/review-queue`
+* POST `/api/verification/review/:requestId`
+
+### Collector Metrics (Person 2)
+* GET `/api/collector/metrics`
+* GET `/api/collector/metrics/:collectorId`
 
 ### Dumping Reports
 * POST `/api/dumping-reports`
