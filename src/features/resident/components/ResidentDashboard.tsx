@@ -19,7 +19,7 @@ import {
 import { RequestCollectionForm } from './RequestCollectionForm';
 import { RecentRequestsList } from './RecentRequestsList';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
-import { RewardTransactionDTO } from '@/types';
+import { RewardTransactionDTO, RewardSummaryDTO } from '@/types';
 
 // Mock data for UI representation
 const MOCK_PROFILE = {
@@ -33,17 +33,6 @@ const MOCK_COMMUNITY = {
   name: 'Greenfield Eco Valley',
   address: 'Sector 4, Eco Enclave, Bengaluru, 560102',
   membersCount: 142
-};
-
-const MOCK_REWARDS = {
-  balancePoints: 450,
-  lifetimePoints: 1200,
-  rank: 12,
-  recentTransactions: [
-    { id: '1', reason: 'Verified Waste Collection', points: 50, date: '2026-08-11' },
-    { id: '2', reason: 'Community Clean-up Drive', points: 100, date: '2026-08-08' },
-    { id: '3', reason: 'Perfect Segregation Bonus', points: 25, date: '2026-08-05' }
-  ]
 };
 
 const MOCK_COMMUNITY_SCORE = {
@@ -63,7 +52,9 @@ export const ResidentDashboard: React.FC = () => {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community'>('overview');
   const [transactions, setTransactions] = useState<RewardTransactionDTO[]>([]);
+  const [summary, setSummary] = useState<RewardSummaryDTO | null>(null);
   const [loadingTransactions, setLoadingTransactions] = useState(true);
+  const [loadingSummary, setLoadingSummary] = useState(true);
 
   useEffect(() => {
     const initAuthAndFetch = async () => {
@@ -92,26 +83,46 @@ export const ResidentDashboard: React.FC = () => {
       }
 
       if (currentSession) {
-        try {
-          setLoadingTransactions(true);
-          const res = await fetch('/api/rewards', {
-            headers: {
-              'Authorization': `Bearer ${currentSession.access_token}`
-            }
-          });
+        // Fetch transactions in background
+        const fetchTxPromise = fetch('/api/rewards', {
+          headers: {
+            'Authorization': `Bearer ${currentSession.access_token}`
+          }
+        }).then(async (res) => {
           if (res.ok) {
             const result = await res.json();
             setTransactions(result.data || []);
           } else {
             console.error('Failed to fetch rewards:', res.status);
           }
-        } catch (err) {
+        }).catch((err) => {
           console.error('Error fetching rewards:', err);
-        } finally {
+        }).finally(() => {
           setLoadingTransactions(false);
-        }
+        });
+
+        // Fetch summary in background
+        const fetchSummaryPromise = fetch('/api/rewards/summary', {
+          headers: {
+            'Authorization': `Bearer ${currentSession.access_token}`
+          }
+        }).then(async (res) => {
+          if (res.ok) {
+            const result = await res.json();
+            setSummary(result.data || null);
+          } else {
+            console.error('Failed to fetch rewards summary:', res.status);
+          }
+        }).catch((err) => {
+          console.error('Error fetching rewards summary:', err);
+        }).finally(() => {
+          setLoadingSummary(false);
+        });
+
+        await Promise.all([fetchTxPromise, fetchSummaryPromise]);
       } else {
         setLoadingTransactions(false);
+        setLoadingSummary(false);
       }
     };
 
@@ -186,7 +197,7 @@ export const ResidentDashboard: React.FC = () => {
                 <span className="text-xs text-slate-400 dark:text-slate-500 block">Reward Balance</span>
                 <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-0.5">
                   <Award className="w-4 h-4" />
-                  {MOCK_REWARDS.balancePoints} pts
+                  {loadingSummary ? '...' : (summary?.balancePoints ?? 0)} pts
                 </span>
               </div>
               <div className="col-span-2 sm:col-span-1">
@@ -304,12 +315,16 @@ export const ResidentDashboard: React.FC = () => {
                     </div>
                     <span className="text-2xs font-bold text-emerald-700 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">Active Balance</span>
                   </div>
-                  <span className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tight">{MOCK_REWARDS.balancePoints}</span>
+                  <span className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tight">
+                    {loadingSummary ? '...' : (summary?.balancePoints ?? 0)}
+                  </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400 block mt-1">Available reward points</span>
                 </div>
                 <div className="mt-8 pt-4 border-t border-emerald-500/10 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
                   <span>Lifetime Points Earned:</span>
-                  <span className="font-bold text-slate-800 dark:text-slate-200">{MOCK_REWARDS.lifetimePoints}</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    {loadingSummary ? '...' : (summary?.lifetimePoints ?? 0)}
+                  </span>
                 </div>
               </div>
 
@@ -322,7 +337,9 @@ export const ResidentDashboard: React.FC = () => {
                     </div>
                     <span className="text-2xs font-bold text-indigo-700 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full">Community Rank</span>
                   </div>
-                  <span className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tight">#{MOCK_REWARDS.rank}</span>
+                  <span className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tight">
+                    {loadingSummary ? '...' : (summary?.rank ? `#${summary.rank}` : 'N/A')}
+                  </span>
                   <span className="text-xs text-slate-500 dark:text-slate-400 block mt-1">Out of {MOCK_COMMUNITY.membersCount} residents</span>
                 </div>
                 <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
