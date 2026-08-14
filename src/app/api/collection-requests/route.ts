@@ -9,10 +9,13 @@ import { ApiResponse, CollectionRequestDTO } from '@/types';
  */
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createServerSupabaseClient();
+    // 1. Authenticate user using Authorization Bearer token
+    const authHeader = request.headers.get('Authorization');
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined;
 
-    // 1. Authenticate user
+    const supabase = createServerSupabaseClient(token);
     const { data: { user } } = await supabase.auth.getUser();
+
     if (!user) {
       const response: ApiResponse<null> = {
         success: false,
@@ -162,3 +165,97 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response, { status: 500 });
   }
 }
+
+/**
+ * GET /api/collection-requests
+ * Allows authenticated residents to retrieve their waste collection requests.
+ */
+export async function GET(request: NextRequest) {
+  try {
+    // 1. Authenticate user using Authorization Bearer token
+    const authHeader = request.headers.get('Authorization');
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined;
+
+    const supabase = createServerSupabaseClient(token);
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      const response: ApiResponse<null> = {
+        success: false,
+        data: null,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication is required.'
+        }
+      };
+      return NextResponse.json(response, { status: 401 });
+    }
+
+    // 2. Fetch collection requests for the authenticated user
+    const { data: requests, error: fetchError } = await supabase
+      .from('collection_requests')
+      .select(`
+        id,
+        resident_id,
+        community_id,
+        status,
+        requested_at,
+        completed_at,
+        resident:users!collection_requests_resident_id_fkey(name),
+        community:communities!collection_requests_community_id_fkey(name)
+      `)
+      .eq('resident_id', user.id)
+      .order('requested_at', { ascending: false });
+
+    if (fetchError) {
+      console.error('[GET /api/collection-requests Database Error]:', fetchError);
+      const response: ApiResponse<null> = {
+        success: false,
+        data: null,
+        error: {
+          code: 'DATABASE_ERROR',
+          message: 'Failed to retrieve collection requests.'
+        }
+      };
+      return NextResponse.json(response, { status: 500 });
+    }
+
+    // 3. Format requests to DTOs
+    const formattedData: CollectionRequestDTO[] = (requests || []).map((req) => {
+      const residentObj = Array.isArray(req.resident) ? req.resident[0] : req.resident;
+      const communityObj = Array.isArray(req.community) ? req.community[0] : req.community;
+
+      return {
+        id: req.id,
+        residentId: req.resident_id,
+        communityId: req.community_id,
+        status: req.status,
+        requestedAt: req.requested_at,
+        completedAt: req.completed_at,
+        residentName: residentObj?.name,
+        communityName: communityObj?.name
+      };
+    });
+
+    const response: ApiResponse<CollectionRequestDTO[]> = {
+      success: true,
+      data: formattedData,
+      error: null
+    };
+
+    return NextResponse.json(response, { status: 200 });
+
+  } catch (err: any) {
+    console.error('[GET /api/collection-requests Unexpected Error]:', err);
+    const response: ApiResponse<null> = {
+      success: false,
+      data: null,
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'An unexpected error occurred.'
+      }
+    };
+    return NextResponse.json(response, { status: 500 });
+  }
+}
+

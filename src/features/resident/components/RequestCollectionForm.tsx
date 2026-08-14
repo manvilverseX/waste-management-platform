@@ -1,0 +1,314 @@
+'use client';
+
+import React, { useState } from 'react';
+import { X, Camera, Upload, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react';
+
+interface Props {
+  onClose: () => void;
+}
+
+import { supabaseBrowserClient } from '@/lib/supabase/client';
+
+export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
+  const [wasteType, setWasteType] = useState('mixed');
+  const [description, setDescription] = useState('');
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleMockImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setError(null);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFile) return;
+
+    setIsSubmitting(true);
+    setError(null);
+
+    let createdRequestId: string | null = null;
+    let uploadedPath: string | null = null;
+
+    try {
+      // 1. Get authenticated user session
+      const { data: { session }, error: sessionError } = await supabaseBrowserClient.auth.getSession();
+      if (sessionError || !session) {
+        throw new Error('You must be logged in to request a collection.');
+      }
+      const user = session.user;
+      const token = session.access_token;
+
+      // 2. Fetch community membership of this user
+      const { data: membership, error: membershipError } = await supabaseBrowserClient
+        .from('community_memberships')
+        .select('community_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (membershipError || !membership) {
+        throw new Error('No community membership found. Please join a community first.');
+      }
+
+      const communityId = membership.community_id;
+
+      // 3. Create collection request via API
+      const reqResponse = await fetch('/api/collection-requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ communityId })
+      });
+
+      if (!reqResponse.ok) {
+        const errData = await reqResponse.json();
+        throw new Error(errData?.error?.message || 'Failed to create collection request.');
+      }
+
+      const reqResult = await reqResponse.json();
+      createdRequestId = reqResult.data.id;
+
+      if (!createdRequestId) {
+        throw new Error('Collection request creation returned an invalid ID.');
+      }
+
+      // 4. Upload image to Supabase Storage under user/request-specific path
+      const fileExt = selectedFile.name.split('.').pop() || 'jpg';
+      uploadedPath = `${user.id}/${createdRequestId}/before.${fileExt}`;
+
+      const { error: uploadError } = await supabaseBrowserClient.storage
+        .from('evidence')
+        .upload(uploadedPath, selectedFile, {
+          cacheControl: '3600',
+          upsert: true
+        });
+
+      if (uploadError) {
+        throw new Error(`Image upload failed: ${uploadError.message}`);
+      }
+
+      // 5. Get public URL of the uploaded image
+      const { data: { publicUrl } } = supabaseBrowserClient.storage
+         .from('evidence')
+         .getPublicUrl(uploadedPath);
+
+      // 6. Create evidence record via API
+      const evidenceResponse = await fetch('/api/evidence', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          collectionRequestId: createdRequestId,
+          imageUrl: publicUrl,
+          evidenceType: 'RESIDENT_BEFORE'
+        })
+      });
+
+      if (!evidenceResponse.ok) {
+        const errData = await evidenceResponse.json();
+        throw new Error(errData?.error?.message || 'Failed to register evidence.');
+      }
+
+      setIsSuccess(true);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'An unexpected error occurred.');
+
+      // Rollback: if file was uploaded but evidence insert failed, clean up Storage
+      if (uploadedPath) {
+        try {
+          await supabaseBrowserClient.storage
+            .from('evidence')
+            .remove([uploadedPath]);
+        } catch (cleanupErr) {
+          console.error('Failed to cleanup uploaded file during rollback:', cleanupErr);
+        }
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+      {/* Backdrop */}
+      <div 
+        className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity" 
+        onClick={onClose}
+      ></div>
+
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10 sm:pl-16">
+          <div className="pointer-events-auto w-screen max-w-md transform transition-all duration-300 ease-in-out">
+            <div className="flex h-full flex-col overflow-y-scroll bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl">
+              {/* Form Header */}
+              <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 dark:text-white">New Collection Request</h2>
+                  <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">Submit details for your waste collection</p>
+                </div>
+                <button 
+                  onClick={onClose} 
+                  className="rounded-xl p-1.5 hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors text-slate-450 dark:text-slate-400"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Form Body / Success State */}
+              <div className="relative flex-1 py-6 px-6">
+                {isSuccess ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center space-y-4 py-12">
+                    <div className="h-16 w-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 rounded-full flex items-center justify-center">
+                      <CheckCircle2 className="w-9 h-9" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-800 dark:text-white">Request Created!</h3>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 max-w-xs mx-auto">
+                        Your collection request has been listed. You will earn reward points once verified by our collector team.
+                      </p>
+                    </div>
+                    <button
+                      onClick={onClose}
+                      className="mt-6 px-6 py-2.5 bg-slate-900 hover:bg-slate-850 dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors"
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSubmit} className="space-y-6">
+                    {/* Waste type */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-350 block">Waste Category</label>
+                      <div className="grid grid-cols-3 gap-2.5">
+                        {[
+                          { id: 'mixed', label: 'Mixed Waste' },
+                          { id: 'organic', label: 'Organic' },
+                          { id: 'recyclables', label: 'Recyclables' }
+                        ].map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setWasteType(item.id)}
+                            className={`py-2 px-3 rounded-xl border text-2xs font-bold text-center transition-all ${
+                              wasteType === item.id
+                                ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-450'
+                                : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Image uploads (BEFORE photos) */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-350 block">
+                        Evidence Photo (BEFORE)
+                      </label>
+                      
+                      {imagePreview ? (
+                        <div className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 aspect-video flex items-center justify-center group">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={imagePreview} alt="Before preview" className="object-cover w-full h-full" />
+                          <button
+                            type="button"
+                            onClick={() => setImagePreview(null)}
+                            className="absolute top-3 right-3 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white backdrop-blur-xs transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="border-2 border-dashed border-slate-250 dark:border-slate-800 hover:border-emerald-500/50 dark:hover:border-emerald-500/40 rounded-2xl p-6 text-center bg-slate-50/50 dark:bg-slate-950/20 transition-colors flex flex-col items-center justify-center gap-2 group cursor-pointer relative">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleMockImageUpload}
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                          />
+                          <div className="p-3 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 text-slate-400 dark:text-slate-500 group-hover:text-emerald-500 dark:group-hover:text-emerald-400 group-hover:scale-105 rounded-2xl shadow-xs transition-all">
+                            <Camera className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">Take Photo or Upload</span>
+                            <span className="text-2xs text-slate-450 dark:text-slate-500 block mt-0.5">JPEG, PNG up to 5MB</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {!imagePreview && (
+                        <div className="flex items-start gap-2 p-3 bg-amber-500/5 border border-amber-500/10 rounded-2xl text-2xs text-amber-600 dark:text-amber-400">
+                          <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                          <span>An evidence photo of the garbage site is required to verify your request.</span>
+                        </div>
+                      )}
+
+                      {error && (
+                        <div className="flex items-start gap-2 p-3 bg-rose-500/5 border border-rose-500/10 rounded-2xl text-2xs text-rose-600 dark:text-rose-400">
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                          <span>{error}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Description */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-350 block">Description (Optional)</label>
+                      <textarea
+                        rows={3}
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Add location details, instruction or notes..."
+                        className="w-full text-xs p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 dark:focus:border-emerald-500 transition-shadow outline-none resize-none"
+                      />
+                    </div>
+
+                    {/* Submit footer */}
+                    <div className="pt-6 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={onClose}
+                        className="px-4 py-2 text-xs font-bold text-slate-550 dark:text-slate-450 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSubmitting || !imagePreview}
+                        className={`px-5 py-2.5 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 ${
+                          imagePreview 
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500' 
+                            : 'bg-slate-100 dark:bg-slate-850 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                        }`}
+                      >
+                        {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        {isSubmitting ? 'Submitting...' : 'Submit Request'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

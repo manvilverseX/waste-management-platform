@@ -32,3 +32,14 @@ export interface ApiResponse<T> {
   } | null;
 }
 
+export interface EvidenceDTO {
+  id: string;
+  collectionRequestId: string;
+  evidenceType: EvidenceType;
+  imageUrl: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  verificationStatus: VerificationStatus;
+}
+
+
