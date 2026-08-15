@@ -23,19 +23,11 @@ import { ReportDumpingForm } from './ReportDumpingForm';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
 import { RewardTransactionDTO, RewardSummaryDTO, CommunityProfileDTO, CommunityScorecardDTO } from '@/types';
 
-// Mock data for UI representation
-const MOCK_PROFILE = {
-  name: 'Manvil Shetty',
-  email: 'manvil@sih.gov.in',
-  role: 'Resident',
-  joinedAt: 'August 2026'
-};
-
-
 export const ResidentDashboard: React.FC = () => {
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showDumpingForm, setShowDumpingForm] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community'>('overview');
+  const [profile, setProfile] = useState<{ name: string; email: string } | null>(null);
   const [transactions, setTransactions] = useState<RewardTransactionDTO[]>([]);
   const [summary, setSummary] = useState<RewardSummaryDTO | null>(null);
   const [community, setCommunity] = useState<CommunityProfileDTO | null>(null);
@@ -80,6 +72,11 @@ export const ResidentDashboard: React.FC = () => {
       }
 
       if (currentSession) {
+        setProfile({
+          name: currentSession.user.user_metadata?.name || currentSession.user.email?.split('@')[0] || 'Resident',
+          email: currentSession.user.email || ''
+        });
+
         // Fetch transactions in background
         const fetchTxPromise = fetch('/api/rewards', {
           headers: {
@@ -190,7 +187,7 @@ export const ResidentDashboard: React.FC = () => {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-900 shadow-xs">
               <User className="w-4 h-4 text-emerald-500" />
-              <span className="text-xs font-semibold">{MOCK_PROFILE.name}</span>
+              <span className="text-xs font-semibold">{profile?.name || 'Resident'}</span>
             </div>
           </div>
         </div>
@@ -209,7 +206,7 @@ export const ResidentDashboard: React.FC = () => {
               <div>
                 <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Welcome back</span>
                 <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-1 bg-gradient-to-r from-slate-900 to-slate-800 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
-                  {MOCK_PROFILE.name}
+                  {profile?.name || 'Resident'}
                 </h1>
                 <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
                   Community Resident at <strong className="font-semibold text-slate-700 dark:text-slate-300">{loadingCommunity ? '...' : (community?.name || 'My Community')}</strong>
