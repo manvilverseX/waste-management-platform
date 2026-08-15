@@ -240,6 +240,7 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
                           <input
                             type="file"
                             accept="image/*"
+                            capture="environment"
                             onChange={handleMockImageUpload}
                             className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                           />
@@ -247,8 +248,10 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
                             <Camera className="w-6 h-6" />
                           </div>
                           <div>
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">Take Photo or Upload</span>
-                            <span className="text-2xs text-slate-450 dark:text-slate-500 block mt-0.5">JPEG, PNG up to 5MB</span>
+                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">Take Photo of Waste</span>
+                            <span className="text-2xs text-slate-450 dark:text-slate-500 block mt-1 leading-relaxed">
+                              Camera input is required. Snap a direct photograph of the garbage pile.
+                            </span>
                           </div>
                         </div>
                       )}
