@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
-  Gift, 
+  Gift,
   Trophy, 
   User, 
   MapPin, 
@@ -44,6 +44,44 @@ export const ResidentDashboard: React.FC = () => {
     } catch (e) {
       console.error('Logout failed:', e);
       router.push('/auth/login');
+    }
+  };
+
+  const [claimingTip, setClaimingTip] = useState(false);
+  const [tipClaimedStatus, setTipClaimedStatus] = useState<string | null>(null);
+
+  const handleClaimTip = async () => {
+    setClaimingTip(true);
+    setTipClaimedStatus(null);
+    try {
+      const { data: { session } } = await supabaseBrowserClient.auth.getSession();
+      if (!session) {
+        setTipClaimedStatus('You must be logged in.');
+        return;
+      }
+      const res = await fetch('/api/rewards/educational', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      const result = await res.json();
+      if (res.ok && result.success) {
+        setTipClaimedStatus('Points claimed successfully (+10 pts)!');
+        if (summary) {
+          setSummary({
+            ...summary,
+            balancePoints: summary.balancePoints + 10,
+            lifetimePoints: summary.lifetimePoints + 10
+          });
+        }
+      } else {
+        setTipClaimedStatus(result.error?.message || 'Failed to claim points.');
+      }
+    } catch {
+      setTipClaimedStatus('An unexpected error occurred.');
+    } finally {
+      setClaimingTip(false);
     }
   };
 
@@ -280,10 +318,22 @@ export const ResidentDashboard: React.FC = () => {
               <span className="text-xs font-bold uppercase tracking-wider">Green Tip of the Day</span>
             </div>
             <h3 className="text-base font-bold mb-2">Wash Recyclables Before Discarding</h3>
-            <p className="text-slate-300 text-xs leading-relaxed">
+            <p className="text-slate-300 text-xs leading-relaxed mb-4">
               Clean containers prevent contamination in the recycling bin, increasing the reuse value and earning you perfect segregation reward points!
             </p>
-            <div className="mt-6 flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl p-3">
+            
+            <button
+              onClick={handleClaimTip}
+              disabled={claimingTip}
+              className="w-full py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl shadow-md transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {claimingTip ? 'Claiming...' : 'Claim Daily Engagement Points (+10 pts)'}
+            </button>
+            {tipClaimedStatus && (
+              <p className="text-2xs mt-2 text-center text-emerald-400 font-semibold">{tipClaimedStatus}</p>
+            )}
+
+            <div className="mt-4 flex items-center gap-3 bg-white/5 border border-white/10 rounded-2xl p-3">
               <Leaf className="w-5 h-5 text-emerald-400 shrink-0" />
               <div className="text-2xs">
                 <span className="text-slate-400 block">Did you know?</span>
