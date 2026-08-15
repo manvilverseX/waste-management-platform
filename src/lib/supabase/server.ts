@@ -13,3 +13,18 @@ export function createServerSupabaseClient(token?: string) {
     },
   });
 }
+
+/**
+ * Creates a Supabase client using the ANON key (not service role).
+ * Used for auth operations that should respect RLS (e.g. login, signup verification).
+ */
+export function createServerSupabaseAnonClient() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'placeholder-anon-key';
+
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: false,
+    },
+  });
+}

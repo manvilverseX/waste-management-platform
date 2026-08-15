@@ -1,14 +1,13 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
-  Trash2, 
   Gift, 
   Trophy, 
   User, 
   MapPin, 
   Clock, 
-  CheckCircle2, 
   PlusCircle, 
   Award,
   Sparkles,
@@ -24,6 +23,7 @@ import { supabaseBrowserClient } from '@/lib/supabase/client';
 import { RewardTransactionDTO, RewardSummaryDTO, CommunityProfileDTO, CommunityScorecardDTO } from '@/types';
 
 export const ResidentDashboard: React.FC = () => {
+  const router = useRouter();
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showDumpingForm, setShowDumpingForm] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community'>('overview');
@@ -36,6 +36,16 @@ export const ResidentDashboard: React.FC = () => {
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingCommunity, setLoadingCommunity] = useState(true);
   const [loadingScorecard, setLoadingScorecard] = useState(true);
+
+  const handleLogout = async () => {
+    try {
+      await supabaseBrowserClient.auth.signOut();
+      router.push('/auth/login');
+    } catch (e) {
+      console.error('Logout failed:', e);
+      router.push('/auth/login');
+    }
+  };
 
   const getGrade = (score: number) => {
     if (score >= 90) return 'A+';
@@ -189,6 +199,12 @@ export const ResidentDashboard: React.FC = () => {
               <User className="w-4 h-4 text-emerald-500" />
               <span className="text-xs font-semibold">{profile?.name || 'Resident'}</span>
             </div>
+            <button
+              onClick={handleLogout}
+              className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-500 dark:hover:text-rose-350 border border-rose-500/20 px-3 py-1.5 rounded-xl bg-rose-500/5 hover:bg-rose-500/10 transition-all active:scale-[0.98]"
+            >
+              Log Out
+            </button>
           </div>
         </div>
       </header>
