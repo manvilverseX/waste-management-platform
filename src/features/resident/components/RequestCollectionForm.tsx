@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Camera, Upload, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react';
 
 interface Props {
@@ -18,18 +18,89 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleMockImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-      setError(null);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
+  // HTML5 MediaStream Camera states
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const startCamera = async () => {
+    setCameraError(null);
+    setIsCameraActive(true);
+    try {
+      const constraints = {
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
       };
-      reader.readAsDataURL(file);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err: any) {
+      console.error('Camera startup failed:', err);
+      // Fallback if facingMode: environment fails (e.g. desktop/laptop front cameras)
+      try {
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        setCameraStream(fallbackStream);
+        if (videoRef.current) {
+          videoRef.current.srcObject = fallbackStream;
+        }
+      } catch (fallbackErr: any) {
+        console.error('Fallback camera startup failed:', fallbackErr);
+        setCameraError('Camera access denied or unavailable. Please enable camera permissions.');
+        setIsCameraActive(false);
+      }
     }
   };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setIsCameraActive(false);
+  };
+
+  const handleCapture = () => {
+    if (videoRef.current) {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const file = new File([blob], 'captured-evidence.jpg', { type: 'image/jpeg' });
+            setSelectedFile(file);
+            setImagePreview(URL.createObjectURL(blob));
+            stopCamera();
+            setError(null);
+          }
+        }, 'image/jpeg', 0.85);
+      }
+    }
+  };
+
+  const handleClose = () => {
+    stopCamera();
+    onClose();
+  };
+
+  // Stop camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [cameraStream]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,7 +220,7 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity" 
-        onClick={onClose}
+        onClick={handleClose}
       ></div>
 
       <div className="absolute inset-0 overflow-hidden">
@@ -163,7 +234,7 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
                   <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">Submit details for your waste collection</p>
                 </div>
                 <button 
-                  onClick={onClose} 
+                  onClick={handleClose} 
                   className="rounded-xl p-1.5 hover:bg-slate-150 dark:hover:bg-slate-800 transition-colors text-slate-450 dark:text-slate-400"
                 >
                   <X className="w-5 h-5" />
@@ -184,7 +255,7 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
                       </p>
                     </div>
                     <button
-                      onClick={onClose}
+                      onClick={handleClose}
                       className="mt-6 px-6 py-2.5 bg-slate-900 hover:bg-slate-850 dark:bg-slate-100 dark:hover:bg-white dark:text-slate-900 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors"
                     >
                       Done
@@ -229,30 +300,62 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
                           <img src={imagePreview} alt="Before preview" className="object-cover w-full h-full" />
                           <button
                             type="button"
-                            onClick={() => setImagePreview(null)}
+                            onClick={() => {
+                              setImagePreview(null);
+                              setSelectedFile(null);
+                            }}
+                            className="absolute top-3 right-3 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white backdrop-blur-xs transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : isCameraActive ? (
+                        <div className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black aspect-video flex items-center justify-center">
+                          <video
+                            ref={videoRef}
+                            autoPlay
+                            playsInline
+                            className="w-full h-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleCapture}
+                            className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md transition-colors"
+                          >
+                            <Camera className="w-4 h-4" />
+                            Capture Photo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={stopCamera}
                             className="absolute top-3 right-3 p-1.5 rounded-full bg-slate-900/60 hover:bg-slate-900 text-white backdrop-blur-xs transition-colors"
                           >
                             <X className="w-4 h-4" />
                           </button>
                         </div>
                       ) : (
-                        <div className="border-2 border-dashed border-slate-250 dark:border-slate-800 hover:border-emerald-500/50 dark:hover:border-emerald-500/40 rounded-2xl p-6 text-center bg-slate-50/50 dark:bg-slate-950/20 transition-colors flex flex-col items-center justify-center gap-2 group cursor-pointer relative">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            onChange={handleMockImageUpload}
-                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                          />
-                          <div className="p-3 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 text-slate-400 dark:text-slate-500 group-hover:text-emerald-500 dark:group-hover:text-emerald-400 group-hover:scale-105 rounded-2xl shadow-xs transition-all">
-                            <Camera className="w-6 h-6" />
-                          </div>
-                          <div>
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">Take Photo of Waste</span>
-                            <span className="text-2xs text-slate-450 dark:text-slate-500 block mt-1 leading-relaxed">
-                              Camera input is required. Snap a direct photograph of the garbage pile.
-                            </span>
-                          </div>
+                        <div className="space-y-3">
+                          <button
+                            type="button"
+                            onClick={startCamera}
+                            className="w-full border-2 border-dashed border-slate-250 dark:border-slate-800 hover:border-emerald-500/50 rounded-2xl p-8 text-center bg-slate-50/50 dark:bg-slate-950/20 transition-all flex flex-col items-center justify-center gap-2.5 group cursor-pointer"
+                          >
+                            <div className="p-3.5 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 text-slate-400 group-hover:text-emerald-500 rounded-2xl shadow-xs transition-all">
+                              <Camera className="w-7 h-7" />
+                            </div>
+                            <div>
+                              <span className="text-xs font-bold text-slate-700 dark:text-slate-350 block">Open Camera to Take Photo</span>
+                              <span className="text-2xs text-slate-450 dark:text-slate-500 block mt-1 leading-relaxed max-w-xs mx-auto">
+                                Live camera capture is required. Snap a direct photograph of the garbage pile.
+                              </span>
+                            </div>
+                          </button>
+                          {cameraError && (
+                            <div className="flex items-start gap-2 p-3 bg-rose-500/5 border border-rose-500/10 rounded-2xl text-2xs text-rose-600 dark:text-rose-400">
+                              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                              <span>{cameraError}</span>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -287,7 +390,7 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
                     <div className="pt-6 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-end gap-3">
                       <button
                         type="button"
-                        onClick={onClose}
+                        onClick={handleClose}
                         className="px-4 py-2 text-xs font-bold text-slate-550 dark:text-slate-450 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-colors"
                       >
                         Cancel
