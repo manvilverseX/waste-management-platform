@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 export async function POST() {
-  if (process.env.NODE_ENV !== 'development') {
+  if (process.env.NODE_ENV !== 'development' && process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN_IN_PROD !== 'true') {
     return NextResponse.json({ error: 'Not allowed in production' }, { status: 403 });
   }
 

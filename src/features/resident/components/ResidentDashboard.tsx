@@ -60,7 +60,7 @@ export const ResidentDashboard: React.FC = () => {
         const { data: { session: existingSession } } = await supabaseBrowserClient.auth.getSession();
         currentSession = existingSession;
 
-        if (!currentSession && process.env.NODE_ENV === 'development') {
+        if (!currentSession && (process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN_IN_PROD === 'true')) {
           console.log('Attempting developer auto-sign-in...');
           const res = await fetch('/api/dev-login', { method: 'POST' });
           if (res.ok) {
