@@ -29,15 +29,13 @@ export const RecentRequestsList: React.FC = () => {
   useEffect(() => {
     setIsMounted(true);
 
-    const fetchRequests = async () => {
+    let active = true;
+    let fallbackTimeout: NodeJS.Timeout;
+
+    const fetchRequests = async (session: any) => {
       try {
         setLoading(true);
         setError(null);
-
-        const { data: { session }, error: sessionError } = await supabaseBrowserClient.auth.getSession();
-        if (sessionError || !session) {
-          throw new Error('You must be logged in to view your history.');
-        }
 
         const res = await fetch('/api/collection-requests', {
           headers: {
@@ -51,16 +49,57 @@ export const RecentRequestsList: React.FC = () => {
         }
 
         const result = await res.json();
-        setRequests(result.data || []);
+        if (active) {
+          setRequests(result.data || []);
+        }
       } catch (err: any) {
         console.error(err);
-        setError(err.message || 'An unexpected error occurred.');
+        if (active) {
+          setError(err.message || 'An unexpected error occurred.');
+        }
       } finally {
-        setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     };
 
-    fetchRequests();
+    // Listen for auth state change
+    const { data: { subscription } } = supabaseBrowserClient.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+
+      if (session) {
+        if (fallbackTimeout) clearTimeout(fallbackTimeout);
+        fetchRequests(session);
+      } else {
+        // If there's no session, check if we should wait for dev auto-login
+        const isDevLoginEnabled = process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN_IN_PROD === 'true';
+        if (!isDevLoginEnabled) {
+          setError('You must be logged in to view your history.');
+          setLoading(false);
+        } else {
+          // If dev-login is enabled, we wait for the auth state change to occur.
+          // Set a fallback timeout in case the dev-login endpoint fails or is misconfigured.
+          if (!fallbackTimeout) {
+            fallbackTimeout = setTimeout(async () => {
+              if (active) {
+                const { data: { session: currentSession } } = await supabaseBrowserClient.auth.getSession();
+                if (!currentSession) {
+                  setError('You must be logged in to view your history.');
+                  setLoading(false);
+                }
+              }
+            }, 5000);
+          }
+        }
+      }
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+      if (fallbackTimeout) clearTimeout(fallbackTimeout);
+    };
   }, []);
 
   const getStatusDetails = (status: CollectionStatus) => {
