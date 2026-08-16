@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Mail, Lock, LogIn, Loader2, Leaf } from 'lucide-react';
+import { Mail, Lock, LogIn, Loader2, Leaf, Shield, User } from 'lucide-react';
 import Link from 'next/link';
 
 export default function LoginPage() {
@@ -12,7 +12,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [role, setRole] = useState<'resident' | 'collector' | 'municipality'>('resident');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,19 +48,51 @@ export default function LoginPage() {
         refresh_token: result.data.session.refreshToken,
       });
 
-      setRole(result.data.role || 'resident');
+      const userRole = result.data.role || 'resident';
 
       // Role-based redirect
-      // TODO: collector/municipality dashboards will be added later
-      // Currently only resident dashboard exists
-      if (role === 'collector' || role === 'municipality') {
-        // Fall back to resident dashboard if the module is not yet implemented
-        router.push('/resident');
+      if (userRole === 'collector') {
+        router.push('/collector');
+      } else if (userRole === 'municipality') {
+        router.push('/resident'); // Fall back to resident or municipality if created later
       } else {
         router.push('/resident');
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Something went wrong. Please try again.';
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDevLogin = async (selectedRole: 'resident' | 'collector') => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/dev-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: selectedRole }),
+      });
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        throw new Error(result.error || 'Developer auto-sign-in failed.');
+      }
+
+      const { supabaseBrowserClient } = await import('@/lib/supabase/client');
+      await supabaseBrowserClient.auth.setSession({
+        access_token: result.accessToken,
+        refresh_token: result.refreshToken,
+      });
+
+      if (selectedRole === 'collector') {
+        router.push('/collector');
+      } else {
+        router.push('/resident');
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Dev login failed.';
       setError(message);
     } finally {
       setIsLoading(false);
@@ -172,6 +203,33 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          {/* Dev Shortcuts */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="flex flex-col gap-2.5 mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80">
+              <p className="text-2xs font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider text-center">Dev Auto Sign-In</p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleDevLogin('resident')}
+                  disabled={isLoading}
+                  className="py-2.5 px-3 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 hover:bg-emerald-500/5 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-450 rounded-xl text-2xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <User className="w-3.5 h-3.5" />
+                  Resident
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDevLogin('collector')}
+                  disabled={isLoading}
+                  className="py-2.5 px-3 border border-slate-200 dark:border-slate-800 hover:border-teal-500/50 hover:bg-teal-500/5 text-slate-700 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-450 rounded-xl text-2xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  Collector
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Footer */}
           <div className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">

@@ -1,13 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Camera, Upload, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react';
+import { X, Camera, RefreshCw, Check, AlertCircle, CheckCircle2, Loader2, Info } from 'lucide-react';
+import { supabaseBrowserClient } from '@/lib/supabase/client';
 
 interface Props {
   onClose: () => void;
 }
-
-import { supabaseBrowserClient } from '@/lib/supabase/client';
 
 export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
   const [wasteType, setWasteType] = useState('mixed');
@@ -22,11 +21,15 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [tempImagePreview, setTempImagePreview] = useState<string | null>(null);
+  const [tempFile, setTempFile] = useState<File | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const startCamera = async () => {
     setCameraError(null);
     setIsCameraActive(true);
+    setIsReviewing(false);
     try {
       const constraints = {
         video: {
@@ -41,7 +44,7 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Camera startup failed:', err);
       // Fallback if facingMode: environment fails (e.g. desktop/laptop front cameras)
       try {
@@ -50,7 +53,7 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
         if (videoRef.current) {
           videoRef.current.srcObject = fallbackStream;
         }
-      } catch (fallbackErr: any) {
+      } catch (fallbackErr: unknown) {
         console.error('Fallback camera startup failed:', fallbackErr);
         setCameraError('Camera access denied or unavailable. Please enable camera permissions.');
         setIsCameraActive(false);
@@ -64,6 +67,9 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
       setCameraStream(null);
     }
     setIsCameraActive(false);
+    setIsReviewing(false);
+    setTempImagePreview(null);
+    setTempFile(null);
   };
 
   const handleCapture = () => {
@@ -78,13 +84,37 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
         canvas.toBlob((blob) => {
           if (blob) {
             const file = new File([blob], 'captured-evidence.jpg', { type: 'image/jpeg' });
-            setSelectedFile(file);
-            setImagePreview(URL.createObjectURL(blob));
-            stopCamera();
+            setTempFile(file);
+            setTempImagePreview(URL.createObjectURL(blob));
+            setIsReviewing(true);
+            
+            // Stop camera stream while reviewing
+            if (cameraStream) {
+              cameraStream.getTracks().forEach(track => track.stop());
+              setCameraStream(null);
+            }
             setError(null);
           }
         }, 'image/jpeg', 0.85);
       }
+    }
+  };
+
+  const handleRetake = async () => {
+    setTempImagePreview(null);
+    setTempFile(null);
+    setIsReviewing(false);
+    await startCamera();
+  };
+
+  const handleConfirm = () => {
+    if (tempImagePreview && tempFile) {
+      setSelectedFile(tempFile);
+      setImagePreview(tempImagePreview);
+      setIsCameraActive(false);
+      setIsReviewing(false);
+      setTempImagePreview(null);
+      setTempFile(null);
     }
   };
 
@@ -110,7 +140,6 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
     setError(null);
 
     let createdRequestId: string | null = null;
-    let uploadedPath: string | null = null;
 
     try {
       // 1. Get authenticated user session
@@ -118,14 +147,13 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
       if (sessionError || !session) {
         throw new Error('You must be logged in to request a collection.');
       }
-      const user = session.user;
       const token = session.access_token;
 
       // 2. Fetch community membership of this user
       const { data: membership, error: membershipError } = await supabaseBrowserClient
         .from('community_memberships')
         .select('community_id')
-        .eq('user_id', user.id)
+        .eq('user_id', session.user.id)
         .maybeSingle();
 
       if (membershipError || !membership) {
@@ -156,38 +184,18 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
         throw new Error('Collection request creation returned an invalid ID.');
       }
 
-      // 4. Upload image to Supabase Storage under user/request-specific path
-      const fileExt = selectedFile.name.split('.').pop() || 'jpg';
-      uploadedPath = `${user.id}/${createdRequestId}/before.${fileExt}`;
+      // 4. Send evidence to backend via multipart/form-data
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('collectionRequestId', createdRequestId);
+      formData.append('evidenceType', 'RESIDENT_BEFORE');
 
-      const { error: uploadError } = await supabaseBrowserClient.storage
-        .from('evidence')
-        .upload(uploadedPath, selectedFile, {
-          cacheControl: '3600',
-          upsert: true
-        });
-
-      if (uploadError) {
-        throw new Error(`Image upload failed: ${uploadError.message}`);
-      }
-
-      // 5. Get public URL of the uploaded image
-      const { data: { publicUrl } } = supabaseBrowserClient.storage
-         .from('evidence')
-         .getPublicUrl(uploadedPath);
-
-      // 6. Create evidence record via API
       const evidenceResponse = await fetch('/api/evidence', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          collectionRequestId: createdRequestId,
-          imageUrl: publicUrl,
-          evidenceType: 'RESIDENT_BEFORE'
-        })
+        body: formData
       });
 
       if (!evidenceResponse.ok) {
@@ -196,18 +204,19 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
       }
 
       setIsSuccess(true);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      setError(err.message || 'An unexpected error occurred.');
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
 
-      // Rollback: if file was uploaded but evidence insert failed, clean up Storage
-      if (uploadedPath) {
+      // Rollback: delete request if it was created but evidence submission failed
+      if (createdRequestId) {
         try {
-          await supabaseBrowserClient.storage
-            .from('evidence')
-            .remove([uploadedPath]);
-        } catch (cleanupErr) {
-          console.error('Failed to cleanup uploaded file during rollback:', cleanupErr);
+          await supabaseBrowserClient
+            .from('collection_requests')
+            .delete()
+            .eq('id', createdRequestId);
+        } catch (rollbackErr) {
+          console.error('Failed to cleanup collection request during rollback:', rollbackErr);
         }
       }
     } finally {
@@ -311,20 +320,47 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
                         </div>
                       ) : isCameraActive ? (
                         <div className="relative rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-black aspect-video flex items-center justify-center">
-                          <video
-                            ref={videoRef}
-                            autoPlay
-                            playsInline
-                            className="w-full h-full object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleCapture}
-                            className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md transition-colors"
-                          >
-                            <Camera className="w-4 h-4" />
-                            Capture Photo
-                          </button>
+                          {isReviewing && tempImagePreview ? (
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={tempImagePreview} alt="Review capture" className="w-full h-full object-cover" />
+                              <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4 px-4">
+                                <button
+                                  type="button"
+                                  onClick={handleRetake}
+                                  className="px-4 py-2 bg-slate-800 hover:bg-slate-750 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md transition-colors"
+                                >
+                                  <RefreshCw className="w-4 h-4 animate-spin-hover" />
+                                  Retake
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleConfirm}
+                                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md transition-colors"
+                                >
+                                  <Check className="w-4 h-4" />
+                                  Confirm
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <video
+                                ref={videoRef}
+                                autoPlay
+                                playsInline
+                                className="w-full h-full object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleCapture}
+                                className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md transition-colors"
+                              >
+                                <Camera className="w-4 h-4" />
+                                Capture Photo
+                              </button>
+                            </>
+                          )}
                           <button
                             type="button"
                             onClick={stopCamera}

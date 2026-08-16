@@ -19,6 +19,7 @@ export interface CollectionRequestDTO {
   status: CollectionStatus;
   requestedAt: string;
   completedAt: string | null;
+  collectorId?: string | null;
   residentName?: string;
   communityName?: string;
 }

@@ -191,8 +191,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(response, { status: 401 });
     }
 
-    // 2. Fetch collection requests for the authenticated user
-    const { data: requests, error: fetchError } = await supabase
+    // Check user role
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (userError || !userData) {
+      const response: ApiResponse<null> = {
+        success: false,
+        data: null,
+        error: {
+          code: 'USER_NOT_FOUND',
+          message: 'User profile does not exist.'
+        }
+      };
+      return NextResponse.json(response, { status: 404 });
+    }
+
+    // Build role-based query
+    let query = supabase
       .from('collection_requests')
       .select(`
         id,
@@ -201,10 +220,35 @@ export async function GET(request: NextRequest) {
         status,
         requested_at,
         completed_at,
+        collector_id,
         resident:users!collection_requests_resident_id_fkey(name),
         community:communities!collection_requests_community_id_fkey(name)
-      `)
-      .eq('resident_id', user.id)
+      `);
+
+    if (userData.role === 'resident') {
+      query = query.eq('resident_id', user.id);
+    } else if (userData.role === 'collector') {
+      // Find the collector's community
+      const { data: membership } = await supabase
+        .from('community_memberships')
+        .select('community_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (membership?.community_id) {
+        query = query.eq('community_id', membership.community_id);
+      } else {
+        // Return empty list if collector has no assigned community
+        const response: ApiResponse<CollectionRequestDTO[]> = {
+          success: true,
+          data: [],
+          error: null
+        };
+        return NextResponse.json(response, { status: 200 });
+      }
+    }
+
+    const { data: requests, error: fetchError } = await query
       .order('requested_at', { ascending: false });
 
     if (fetchError) {
@@ -232,6 +276,7 @@ export async function GET(request: NextRequest) {
         status: req.status,
         requestedAt: req.requested_at,
         completedAt: req.completed_at,
+        collectorId: req.collector_id,
         residentName: residentObj?.name,
         communityName: communityObj?.name
       };
@@ -245,7 +290,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(response, { status: 200 });
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('[GET /api/collection-requests Unexpected Error]:', err);
     const response: ApiResponse<null> = {
       success: false,
