@@ -12,6 +12,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [devCommunity, setDevCommunity] = useState('eb888dee-4b1e-4c65-8ffa-351783fd06d1');
+  const [devUserIndex, setDevUserIndex] = useState<1 | 2>(1);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,7 +75,11 @@ export default function LoginPage() {
       const res = await fetch('/api/dev-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: selectedRole }),
+        body: JSON.stringify({
+          role: selectedRole,
+          communityId: devCommunity,
+          userIndex: devUserIndex
+        }),
       });
       const result = await res.json();
       if (!res.ok || result.error) {
@@ -208,8 +214,54 @@ export default function LoginPage() {
 
           {/* Dev Shortcuts */}
           {process.env.NODE_ENV === 'development' && (
-            <div className="flex flex-col gap-2.5 mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80">
+            <div className="flex flex-col gap-3.5 mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80">
               <p className="text-2xs font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider text-center">Dev Auto Sign-In</p>
+
+              {/* Community Selector */}
+              <div className="space-y-1">
+                <label className="text-3xs font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Demo Community</label>
+                <select
+                  value={devCommunity}
+                  onChange={(e) => setDevCommunity(e.target.value)}
+                  className="w-full text-xs bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-700 dark:text-slate-250 font-bold"
+                >
+                  <option value="eb888dee-4b1e-4c65-8ffa-351783fd06d1">Maplewood District (Default)</option>
+                  <option value="a1888dee-4b1e-4c65-8ffa-351783fd06d0">Purvankara Apartments, CRPF</option>
+                  <option value="b1888dee-4b1e-4c65-8ffa-351783fd06d1">Prestige Elite, Avalahalli</option>
+                  <option value="c1888dee-4b1e-4c65-8ffa-351783fd06d2">Concord Silicon Valley, Rajanakunte</option>
+                </select>
+              </div>
+
+              {/* User Index Selector */}
+              <div className="space-y-1">
+                <label className="text-3xs font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Demo Identity</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDevUserIndex(1)}
+                    className={`py-1.5 border rounded-xl text-3xs font-extrabold transition-all cursor-pointer ${
+                      devUserIndex === 1
+                        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-550 dark:text-emerald-400'
+                        : 'border-slate-200 dark:border-slate-850 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/40'
+                    }`}
+                  >
+                    Resident 1 / Collector
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDevUserIndex(2)}
+                    className={`py-1.5 border rounded-xl text-3xs font-extrabold transition-all cursor-pointer ${
+                      devUserIndex === 2
+                        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-550 dark:text-emerald-400'
+                        : 'border-slate-200 dark:border-slate-850 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/40'
+                    }`}
+                  >
+                    Resident 2
+                  </button>
+                </div>
+              </div>
+
+              {/* Trigger Buttons */}
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
@@ -236,7 +288,7 @@ export default function LoginPage() {
                   className="py-2.5 px-2 border border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 hover:bg-indigo-500/5 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-450 rounded-xl text-3xs font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                 >
                   <Shield className="w-3 h-3" />
-                  Mun.
+                  Mun. Admin
                 </button>
               </div>
             </div>

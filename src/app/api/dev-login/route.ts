@@ -8,6 +8,9 @@ export async function POST(request: NextRequest) {
 
   try {
     let role: 'resident' | 'collector' | 'municipality' = 'resident';
+    let communityId = 'eb888dee-4b1e-4c65-8ffa-351783fd06d1'; // Default: Maplewood District
+    let userIndex = 1;
+
     try {
       const body = await request.json();
       if (body?.role === 'collector') {
@@ -15,15 +18,57 @@ export async function POST(request: NextRequest) {
       } else if (body?.role === 'municipality') {
         role = 'municipality';
       }
+      if (body?.communityId) {
+        communityId = body.communityId;
+      }
+      if (typeof body?.userIndex === 'number') {
+        userIndex = body.userIndex;
+      }
     } catch {
-      // Default to resident if request body is empty or invalid JSON
+      // Default to values if body is empty/invalid
     }
 
-    let email = 'resident-test@ecoclean.com';
-    if (role === 'collector') {
-      email = 'collector-test@ecoclean.com';
-    } else if (role === 'municipality') {
+    // Determine target email and name
+    let email = '';
+    let name = '';
+
+    if (role === 'municipality') {
       email = 'municipality-test@ecoclean.com';
+      name = 'Municipality Admin';
+    } else {
+      // Determine prefix based on community
+      let prefix = '';
+      if (communityId === 'a1888dee-4b1e-4c65-8ffa-351783fd06d0') {
+        prefix = 'purvankara';
+      } else if (communityId === 'b1888dee-4b1e-4c65-8ffa-351783fd06d1') {
+        prefix = 'prestige';
+      } else if (communityId === 'c1888dee-4b1e-4c65-8ffa-351783fd06d2') {
+        prefix = 'concord';
+      } else {
+        prefix = 'maplewood';
+      }
+
+      if (role === 'resident') {
+        // Support legacy resident-test@ecoclean.com
+        if (prefix === 'maplewood' && userIndex === 1) {
+          email = 'resident-test@ecoclean.com';
+          name = 'Test Resident';
+        } else {
+          email = `resident-${prefix}-${userIndex}@ecoclean.com`;
+          const capitalized = prefix.charAt(0).toUpperCase() + prefix.slice(1);
+          name = `${capitalized} Resident ${userIndex}`;
+        }
+      } else if (role === 'collector') {
+        // Support legacy collector-test@ecoclean.com
+        if (prefix === 'maplewood') {
+          email = 'collector-test@ecoclean.com';
+          name = 'Test Collector';
+        } else {
+          email = `collector-${prefix}@ecoclean.com`;
+          const capitalized = prefix.charAt(0).toUpperCase() + prefix.slice(1);
+          name = `${capitalized} Collector`;
+        }
+      }
     }
 
     let password = process.env.TEST_RESIDENT_PASSWORD || 'TempPass999!';
@@ -66,13 +111,6 @@ export async function POST(request: NextRequest) {
       const userId = authData.user.id;
       targetUserId = userId;
 
-      let name = 'Test Resident';
-      if (role === 'collector') {
-        name = 'Test Collector';
-      } else if (role === 'municipality') {
-        name = 'Test Municipality';
-      }
-
       // Insert user profile into public.users
       const { error: userInsertError } = await supabaseAdmin
         .from('users')
@@ -89,27 +127,29 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Ensure the user has community membership
-    if (targetUserId) {
-      const { data: memberRecord } = await supabaseAdmin
+    // Ensure the user has exactly one community membership (only for residents and collectors)
+    if (targetUserId && role !== 'municipality') {
+      // Remove any prior memberships
+      const { error: deleteError } = await supabaseAdmin
         .from('community_memberships')
-        .select('id')
-        .eq('user_id', targetUserId)
-        .eq('community_id', 'eb888dee-4b1e-4c65-8ffa-351783fd06d1')
-        .maybeSingle();
+        .delete()
+        .eq('user_id', targetUserId);
 
-      if (!memberRecord) {
-        const { error: membershipError } = await supabaseAdmin
-          .from('community_memberships')
-          .insert({
-            user_id: targetUserId,
-            community_id: 'eb888dee-4b1e-4c65-8ffa-351783fd06d1',
-            membership_role: 'member'
-          });
+      if (deleteError) {
+        console.error('[dev-login] Failed to clean prior memberships:', deleteError);
+      }
 
-        if (membershipError) {
-          console.error('[dev-login] Failed to assign community membership:', membershipError);
-        }
+      // Add single community membership
+      const { error: membershipError } = await supabaseAdmin
+        .from('community_memberships')
+        .insert({
+          user_id: targetUserId,
+          community_id: communityId,
+          membership_role: 'member'
+        });
+
+      if (membershipError) {
+        console.error('[dev-login] Failed to assign community membership:', membershipError);
       }
     }
 
