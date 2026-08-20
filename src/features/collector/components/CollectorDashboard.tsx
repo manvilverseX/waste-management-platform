@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
-  X, Camera, RefreshCw, Check, AlertCircle, CheckCircle2, Loader2, 
-  Leaf, LogOut, MapPin, Inbox, History, Calendar, CheckSquare
+import {
+  X, Camera, RefreshCw, Check, AlertCircle, CheckCircle2, Loader2,
+  Leaf, LogOut, MapPin, Inbox, History, Calendar, CheckSquare,
+  ChevronRight, Info, Sparkles, Clock, Award, Trophy, TrendingUp, Gift
 } from 'lucide-react';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
 import { CollectionRequestDTO } from '@/types';
@@ -21,8 +22,158 @@ export const CollectorDashboard: React.FC = () => {
   const [loadingRequests, setLoadingRequests] = useState(true);
   const [requestsError, setRequestsError] = useState<string | null>(null);
 
-  // Active Tab: 'available' | 'assignments' | 'history'
-  const [activeTab, setActiveTab] = useState<'available' | 'assignments' | 'history'>('available');
+  // Verification Details for expanded history entries
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [expandedVerification, setExpandedVerification] = useState<{
+    analysis: string;
+    decision: 'verified' | 'rejected' | 'needs_review';
+  } | null>(null);
+  const [loadingVerification, setLoadingVerification] = useState(false);
+
+  useEffect(() => {
+    if (!selectedRequestId) {
+      setExpandedVerification(null);
+      return;
+    }
+
+    let active = true;
+    const fetchVerification = async () => {
+      setLoadingVerification(true);
+      try {
+        const { data: evidence, error: fetchErr } = await supabaseBrowserClient
+          .from('evidence')
+          .select(`
+            id,
+            verification_results (
+              id,
+              decision,
+              analysis,
+              verified_at
+            )
+          `)
+          .eq('collection_request_id', selectedRequestId)
+          .eq('evidence_type', 'COLLECTOR_AFTER')
+          .maybeSingle();
+
+        if (fetchErr) throw fetchErr;
+
+        if (active && evidence && evidence.verification_results) {
+          const results = Array.isArray(evidence.verification_results)
+            ? evidence.verification_results
+            : [evidence.verification_results];
+
+          if (results.length > 0) {
+            const sorted = [...results].sort((a, b) =>
+              new Date(b.verified_at).getTime() - new Date(a.verified_at).getTime()
+            );
+            setExpandedVerification({
+              analysis: sorted[0].analysis,
+              decision: sorted[0].decision
+            });
+          } else {
+            setExpandedVerification(null);
+          }
+        } else {
+          setExpandedVerification(null);
+        }
+      } catch (err) {
+        console.error('Error fetching verification details:', err);
+        if (active) setExpandedVerification(null);
+      } finally {
+        if (active) setLoadingVerification(false);
+      }
+    };
+
+    fetchVerification();
+    return () => {
+      active = false;
+    };
+  }, [selectedRequestId]);
+
+  const formatVerificationAnalysis = (analysisText: string): string => {
+    if (!analysisText) return 'No detailed explanation was provided.';
+
+    if (analysisText.includes('Gemini Analysis:')) {
+      const reasoningIndex = analysisText.indexOf('Reasoning:');
+      if (reasoningIndex !== -1) {
+        return analysisText.substring(reasoningIndex + 10).trim();
+      }
+      if (analysisText.includes('Automated check failed:')) {
+        return 'The uploaded before and after images appear to be identical. Verification could not confirm collection.';
+      }
+      return 'The automated verification scan flagged anomalies in the evidence photos. Awaiting manual confirmation.';
+    }
+
+    return analysisText;
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'PENDING': return 'Pending';
+      case 'ASSIGNED': return 'Assigned';
+      case 'COLLECTED': return 'Under Verification';
+      case 'VERIFIED': return 'Verified';
+      case 'REJECTED': return 'Rejected';
+      default: return status;
+    }
+  };
+
+  // Rewards States
+  const [rewardsSummary, setRewardsSummary] = useState<{ balancePoints: number; lifetimePoints: number } | null>(null);
+  const [loadingRewards, setLoadingRewards] = useState(true);
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(true);
+
+  const fetchRewardsSummary = async () => {
+    setLoadingRewards(true);
+    try {
+      const { data: { session } } = await supabaseBrowserClient.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch('/api/rewards/summary', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+
+      if (!res.ok) throw new Error('Failed to load rewards summary.');
+      const result = await res.json();
+      if (result.success && result.data) {
+        setRewardsSummary(result.data);
+      }
+    } catch (err) {
+      console.error('Error fetching rewards summary:', err);
+    } finally {
+      setLoadingRewards(false);
+    }
+  };
+
+  const fetchRewardsHistory = async () => {
+    setLoadingTransactions(true);
+    try {
+      const { data: { session } } = await supabaseBrowserClient.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch('/api/rewards', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+
+      if (!res.ok) throw new Error('Failed to load transactions.');
+      const result = await res.json();
+      if (result.success && result.data) {
+        setTransactions(result.data);
+      }
+    } catch (err) {
+      console.error('Error fetching transactions:', err);
+    } finally {
+      setLoadingTransactions(false);
+    }
+  };
+
+  // Active Tab: 'available' | 'assignments' | 'history' | 'rewards'
+  const [activeTab, setActiveTab] = useState<'available' | 'assignments' | 'history' | 'rewards'>('available');
 
   // Claim/Collect Actions
   const [actionError, setActionError] = useState<string | null>(null);
@@ -106,9 +257,9 @@ export const CollectorDashboard: React.FC = () => {
           .eq('user_id', session.user.id)
           .maybeSingle();
 
-        const commName = membership?.community 
-          ? (Array.isArray(membership.community) 
-              ? membership.community[0]?.name 
+        const commName = membership?.community
+          ? (Array.isArray(membership.community)
+              ? membership.community[0]?.name
               : (membership.community as { name: string }).name)
           : 'Maplewood District';
 
@@ -121,6 +272,8 @@ export const CollectorDashboard: React.FC = () => {
           setLoadingProfile(false);
           // Fetch requests directly upon successful profile initialization
           fetchRequests();
+          fetchRewardsSummary();
+          fetchRewardsHistory();
         }
       } catch (err) {
         console.error('Collector auth check failed:', err);
@@ -289,6 +442,8 @@ export const CollectorDashboard: React.FC = () => {
 
       setIsSuccessState(true);
       await fetchRequests();
+      fetchRewardsSummary();
+      fetchRewardsHistory();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unexpected error uploading evidence.';
       setEvidenceError(msg);
@@ -309,7 +464,7 @@ export const CollectorDashboard: React.FC = () => {
 
   // Filters based on tabs
   const getFilteredRequests = () => {
-    
+
     return requests.filter(req => {
       if (activeTab === 'available') {
         return req.status === 'PENDING';
@@ -359,7 +514,7 @@ export const CollectorDashboard: React.FC = () => {
             <span className="text-2xs font-extrabold text-slate-200 block">{profile?.name}</span>
             <span className="text-3xs text-slate-450 block font-bold">{profile?.email}</span>
           </div>
-          <button 
+          <button
             onClick={handleLogout}
             className="p-2.5 bg-slate-850 hover:bg-rose-950/20 hover:text-rose-400 rounded-xl transition-all border border-slate-800 hover:border-rose-900/30 text-slate-400 cursor-pointer"
             title="Log Out"
@@ -372,7 +527,7 @@ export const CollectorDashboard: React.FC = () => {
       {/* Main dashboard body */}
       <main className="max-w-4xl mx-auto px-6 mt-8">
         {/* Statistics panel */}
-        <section className="grid grid-cols-3 gap-4 mb-8">
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
             <span className="text-3xs text-slate-500 uppercase tracking-widest font-black block">Available Requests</span>
             <span className="text-2xl font-black text-white mt-1 block">
@@ -390,6 +545,19 @@ export const CollectorDashboard: React.FC = () => {
             <span className="text-2xl font-black text-emerald-450 mt-1 block">
               {requests.filter(r => ['COLLECTED', 'VERIFIED'].includes(r.status)).length}
             </span>
+          </div>
+          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between">
+            <div>
+              <span className="text-3xs text-slate-500 uppercase tracking-widest font-black block">My Reward Points</span>
+              <span className="text-2xl font-black text-amber-400 mt-1 block">
+                {loadingRewards ? (
+                  <Loader2 className="w-5 h-5 animate-spin text-slate-600" />
+                ) : (
+                  rewardsSummary?.balancePoints ?? 0
+                )}
+              </span>
+            </div>
+            <Award className="w-8 h-8 text-amber-500/25 shrink-0" />
           </div>
         </section>
 
@@ -425,6 +593,16 @@ export const CollectorDashboard: React.FC = () => {
             Pickup History
             {activeTab === 'history' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-200 rounded-full" />}
           </button>
+          <button
+            onClick={() => setActiveTab('rewards')}
+            className={`pb-3.5 px-4 text-xs font-bold relative transition-colors flex items-center gap-2 cursor-pointer ${
+              activeTab === 'rewards' ? 'text-amber-400' : 'text-slate-450 hover:text-slate-300'
+            }`}
+          >
+            <Award className="w-4 h-4" />
+            My Rewards
+            {activeTab === 'rewards' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-450 rounded-full" />}
+          </button>
         </div>
 
         {/* Display action errors if any */}
@@ -436,7 +614,83 @@ export const CollectorDashboard: React.FC = () => {
         )}
 
         {/* Request cards list */}
-        {loadingRequests ? (
+        {activeTab === 'rewards' ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4 animate-fade-in">
+            {/* Rewards Balance Card */}
+            <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-500/20 rounded-3xl p-6 flex flex-col justify-between shadow-sm">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-2.5 bg-amber-500/20 text-amber-450 rounded-2xl">
+                    <Gift className="w-6 h-6" />
+                  </div>
+                  <span className="text-2xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">Active Balance</span>
+                </div>
+                <span className="text-4xl font-extrabold text-white tracking-tight">
+                  {loadingRewards ? '...' : (rewardsSummary?.balancePoints ?? 0)}
+                </span>
+                <span className="text-xs text-slate-400 block mt-1">Available reward points</span>
+              </div>
+              <div className="mt-8 pt-4 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between font-bold">
+                <span>Lifetime Points Earned:</span>
+                <span className="text-white">
+                  {loadingRewards ? '...' : (rewardsSummary?.lifetimePoints ?? 0)}
+                </span>
+              </div>
+            </div>
+
+            {/* Standing Card */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between shadow-sm">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-2.5 bg-teal-500/10 text-teal-400 rounded-2xl">
+                    <Trophy className="w-6 h-6" />
+                  </div>
+                  <span className="text-2xs font-bold text-teal-400 bg-teal-500/10 border border-teal-500/20 px-2 py-0.5 rounded-full">Standing</span>
+                </div>
+                <span className="text-3xl font-extrabold text-white tracking-tight">
+                  Eco-Hero
+                </span>
+                <span className="text-xs text-slate-400 block mt-1">Active collector rank status</span>
+              </div>
+              <div className="mt-8 pt-4 border-t border-slate-800 text-xs text-slate-400 flex items-center gap-1 font-bold">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Top performer in district</span>
+              </div>
+            </div>
+
+            {/* Reward Transaction History */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-sm">
+              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Recent Transactions</h3>
+              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
+                {loadingTransactions ? (
+                  <div className="flex flex-col items-center justify-center py-6 text-slate-500 gap-2">
+                    <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
+                    <span className="text-2xs">Loading transactions...</span>
+                  </div>
+                ) : transactions.length === 0 ? (
+                  <div className="text-center py-6 text-slate-500">
+                    <p className="text-xs font-semibold">No transactions found</p>
+                    <p className="text-2xs mt-0.5">Your points history will appear here.</p>
+                  </div>
+                ) : (
+                  transactions.map((tx) => (
+                    <div key={tx.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-800 last:border-b-0">
+                      <div>
+                        <span className="font-bold text-slate-200 block">{tx.reason}</span>
+                        <span className="text-slate-455 block mt-0.5 text-3xs font-semibold">
+                          {tx.createdAt ? new Date(tx.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''}
+                        </span>
+                      </div>
+                      <span className="font-extrabold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
+                        +{tx.points}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        ) : loadingRequests ? (
           <div className="py-20 flex flex-col items-center justify-center text-slate-500">
             <Loader2 className="w-7 h-7 animate-spin text-slate-700 mb-2" />
             <p className="text-2xs font-bold uppercase tracking-wider">Loading Requests...</p>
@@ -453,64 +707,129 @@ export const CollectorDashboard: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredRequests.map((req) => (
-              <div 
-                key={req.id} 
-                className="p-5 bg-slate-900 border border-slate-800/80 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 transition-all hover:border-slate-850 shadow-sm"
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xs font-extrabold text-slate-200 block">{req.residentName || 'Resident'}</span>
-                    <span className="text-3xs px-2 py-0.5 rounded-full font-black uppercase tracking-wider text-slate-400 bg-slate-850 border border-slate-800">
-                      {req.status}
-                    </span>
-                  </div>
-                  
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-3xs text-slate-450 font-semibold">
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3 text-slate-500" />
-                      Submitted: {new Date(req.requestedAt).toLocaleDateString()} at {new Date(req.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </div>
-                </div>
+            {filteredRequests.map((req) => {
+              const isExpanded = selectedRequestId === req.id;
+              return (
+                <div
+                  key={req.id}
+                  className={`p-5 bg-slate-900 border border-slate-800/80 rounded-2xl flex flex-col gap-4 transition-all hover:border-slate-850 shadow-sm ${
+                    activeTab === 'history' ? 'cursor-pointer select-none' : ''
+                  }`}
+                  onClick={() => {
+                    if (activeTab === 'history') {
+                      setSelectedRequestId(isExpanded ? null : req.id);
+                    }
+                  }}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xs font-extrabold text-slate-200 block">{req.residentName || 'Resident'}</span>
+                        <span className="text-3xs px-2 py-0.5 rounded-full font-black uppercase tracking-wider text-slate-400 bg-slate-850 border border-slate-800">
+                          {getStatusLabel(req.status)}
+                        </span>
+                      </div>
 
-                <div className="flex items-center gap-3.5 self-end sm:self-center">
-                  {req.status === 'PENDING' && (
-                    <button
-                      onClick={() => handleClaim(req.id)}
-                      disabled={actionLoading !== null}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-                    >
-                      {actionLoading === req.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin mx-auto" />
-                      ) : (
-                        'Claim Collection'
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-3xs text-slate-450 font-semibold">
+                        <span className="flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-slate-500" />
+                          Submitted: {new Date(req.requestedAt).toLocaleDateString()} at {new Date(req.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3.5 self-end sm:self-center">
+                      {req.status === 'PENDING' && (
+                        <button
+                          onClick={() => handleClaim(req.id)}
+                          disabled={actionLoading !== null}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                        >
+                          {actionLoading === req.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin mx-auto" />
+                          ) : (
+                            'Claim Collection'
+                          )}
+                        </button>
                       )}
-                    </button>
-                  )}
 
-                  {req.status === 'ASSIGNED' && (
-                    <button
-                      onClick={() => {
-                        setActiveRequest(req);
-                        setIsCollectModalOpen(true);
-                      }}
-                      className="px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-                    >
-                      Collect Waste
-                    </button>
-                  )}
+                      {req.status === 'ASSIGNED' && (
+                        <button
+                          onClick={() => {
+                            setActiveRequest(req);
+                            setIsCollectModalOpen(true);
+                          }}
+                          className="px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                        >
+                          Collect Waste
+                        </button>
+                      )}
 
-                  {['COLLECTED', 'VERIFIED', 'REJECTED'].includes(req.status) && (
-                    <div className="text-right text-3xs text-slate-500 font-extrabold uppercase">
-                      {req.completedAt && (
-                        <span>Completed: {new Date(req.completedAt).toLocaleDateString()}</span>
+                      {['COLLECTED', 'VERIFIED', 'REJECTED'].includes(req.status) && (
+                        <div className="flex items-center gap-2 text-right text-3xs text-slate-500 font-extrabold uppercase">
+                          {req.completedAt && (
+                            <span>Completed: {new Date(req.completedAt).toLocaleDateString()}</span>
+                          )}
+                          <ChevronRight className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {activeTab === 'history' && isExpanded && (
+                    <div className="border-t border-slate-800/80 pt-4 mt-1 space-y-3 text-xs">
+                      {req.status === 'VERIFIED' && (
+                        <div className="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-xl space-y-1 text-2xs">
+                          <span className="font-bold text-emerald-450 block flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-450" />
+                            Collection Verified
+                          </span>
+                          <p className="text-slate-405 leading-relaxed">
+                            Your collection evidence was successfully verified.
+                          </p>
+                          <p className="text-emerald-400 font-extrabold mt-1">
+                            100 Points Awarded to Resident
+                          </p>
+                        </div>
+                      )}
+
+                      {req.status === 'COLLECTED' && (
+                        <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl space-y-1 text-2xs">
+                          <span className="font-bold text-blue-400 block flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 text-blue-400" />
+                            Under Verification
+                          </span>
+                          <p className="text-slate-405 leading-relaxed">
+                            Your collection evidence is being verified. If the automated check cannot confirm the collection, the request will be reviewed by the Municipality.
+                          </p>
+                        </div>
+                      )}
+
+                      {req.status === 'REJECTED' && (
+                        <div className="p-3 bg-rose-500/5 border border-rose-500/10 rounded-xl space-y-1 text-2xs">
+                          <span className="font-bold text-rose-450 block flex items-center gap-1.5">
+                            <AlertCircle className="w-3.5 h-3.5 text-rose-450" />
+                            Why was this rejected?
+                          </span>
+                          <p className="text-slate-405 leading-relaxed font-semibold">
+                            {loadingVerification ? (
+                              <span className="flex items-center gap-1.5 text-slate-500">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                Retrieving verification details...
+                              </span>
+                            ) : expandedVerification ? (
+                              formatVerificationAnalysis(expandedVerification.analysis)
+                            ) : (
+                              'The uploaded evidence photos did not meet the validation requirements.'
+                            )}
+                          </p>
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
@@ -522,7 +841,7 @@ export const CollectorDashboard: React.FC = () => {
 
           <div className="absolute inset-0 overflow-hidden flex items-center justify-center p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col text-slate-100">
-              
+
               {/* Modal Header */}
               <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
                 <div>
@@ -670,8 +989,8 @@ export const CollectorDashboard: React.FC = () => {
                         type="submit"
                         disabled={isSubmittingEvidence || !imagePreview}
                         className={`px-5 py-2.5 font-bold text-3xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer ${
-                          imagePreview 
-                            ? 'bg-gradient-to-r from-emerald-600 to-teal-650 text-white hover:from-emerald-500 hover:to-teal-550' 
+                          imagePreview
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-650 text-white hover:from-emerald-500 hover:to-teal-550'
                             : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-850'
                         }`}
                       >

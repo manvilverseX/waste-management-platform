@@ -480,7 +480,7 @@ export const ResidentDashboard: React.FC = () => {
                         <div>
                           <span className="font-bold text-slate-800 dark:text-slate-200 block">{tx.reason}</span>
                           <span className="text-slate-400 block mt-0.5">
-                            {new Date(tx.createdAt).toLocaleDateString()}
+                            {tx.createdAt ? new Date(tx.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''}
                           </span>
                         </div>
                         <span className="font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
