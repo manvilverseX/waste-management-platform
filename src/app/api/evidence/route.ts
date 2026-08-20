@@ -321,7 +321,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 9. Update collection request state if COLLECTOR_AFTER
-    let verificationResult: { decision: 'verified' | 'rejected'; analysis: string } | null = null;
+    let verificationResult: { decision: 'verified' | 'rejected' | 'needs_review'; analysis: string } | null = null;
     if (evidenceType === 'COLLECTOR_AFTER') {
       const { error: requestUpdateError } = await supabase
         .from('collection_requests')
@@ -350,7 +350,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 10. Return response formatted as DTO
-    const formattedData: EvidenceDTO & { verification?: { decision: 'verified' | 'rejected'; analysis: string } } = {
+    const formattedData: EvidenceDTO & { verification?: { decision: 'verified' | 'rejected' | 'needs_review'; analysis: string } } = {
       id: newEvidence.id,
       collectionRequestId: newEvidence.collection_request_id,
       evidenceType: newEvidence.evidence_type,

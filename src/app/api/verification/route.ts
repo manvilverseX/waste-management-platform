@@ -6,7 +6,7 @@ import { verifyCollectionRequest } from '@/lib/verification/verify-collection';
 interface VerificationResultDTO {
   id: string;
   collectionRequestId: string;
-  decision: 'verified' | 'rejected';
+  decision: 'verified' | 'rejected' | 'needs_review';
   analysis: string;
   verifiedAt: string;
 }
