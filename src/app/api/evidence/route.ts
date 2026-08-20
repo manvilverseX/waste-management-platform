@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { validateImageBuffer } from '@/lib/validations/image';
 import { ApiResponse, EvidenceDTO } from '@/types';
+import { verifyCollectionRequest } from '@/lib/verification/verify-collection';
 
 /**
  * POST /api/evidence
@@ -320,6 +321,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 9. Update collection request state if COLLECTOR_AFTER
+    let verificationResult: { decision: 'verified' | 'rejected'; analysis: string } | null = null;
     if (evidenceType === 'COLLECTOR_AFTER') {
       const { error: requestUpdateError } = await supabase
         .from('collection_requests')
@@ -331,11 +333,24 @@ export async function POST(request: NextRequest) {
 
       if (requestUpdateError) {
         console.error('[POST /api/evidence Status Update Error]:', requestUpdateError);
+      } else {
+        // 10. Automatically invoke verification after successful COLLECTOR_AFTER upload
+        try {
+          const result = await verifyCollectionRequest(supabase, collectionRequestId);
+          verificationResult = {
+            decision: result.decision,
+            analysis: result.analysis
+          };
+        } catch (verificationErr) {
+          console.error('[POST /api/evidence Auto Verification Error]:', verificationErr);
+          // Do not fail the evidence upload if verification fails
+          // The request remains in COLLECTED status and can be manually verified later
+        }
       }
     }
 
     // 10. Return response formatted as DTO
-    const formattedData: EvidenceDTO = {
+    const formattedData: EvidenceDTO & { verification?: { decision: 'verified' | 'rejected'; analysis: string } } = {
       id: newEvidence.id,
       collectionRequestId: newEvidence.collection_request_id,
       evidenceType: newEvidence.evidence_type,
@@ -345,7 +360,11 @@ export async function POST(request: NextRequest) {
       verificationStatus: newEvidence.verification_status
     };
 
-    const response: ApiResponse<EvidenceDTO> = {
+    if (verificationResult) {
+      formattedData.verification = verificationResult;
+    }
+
+    const response: ApiResponse<typeof formattedData> = {
       success: true,
       data: formattedData,
       error: null

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { ApiResponse } from '@/types';
+import { verifyCollectionRequest } from '@/lib/verification/verify-collection';
 
 interface VerificationResultDTO {
   id: string;
@@ -89,9 +90,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 400 });
     }
 
+    // Fetch the collection request to check status and owner (for authorization validation)
     const { data: requestData, error: requestError } = await supabase
       .from('collection_requests')
-      .select('id, status, resident_id, community_id, collector_id')
+      .select('id, status, collector_id')
       .eq('id', collectionRequestId)
       .maybeSingle();
 
@@ -107,6 +109,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 404 });
     }
 
+    // Check request state: must be COLLECTED
     if (requestData.status !== 'COLLECTED') {
       const response: ApiResponse<null> = {
         success: false,
@@ -119,129 +122,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 400 });
     }
 
-    const { data: beforeEvidence, error: beforeError } = await supabase
-      .from('evidence')
-      .select('id, image_url, uploaded_at, verification_status')
-      .eq('collection_request_id', collectionRequestId)
-      .eq('evidence_type', 'RESIDENT_BEFORE')
-      .maybeSingle();
-
-    const { data: afterEvidence, error: afterError } = await supabase
-      .from('evidence')
-      .select('id, image_url, uploaded_at, verification_status')
-      .eq('collection_request_id', collectionRequestId)
-      .eq('evidence_type', 'COLLECTOR_AFTER')
-      .maybeSingle();
-
-    if (beforeError || afterError) {
-      console.error('[Verification] Evidence fetch error:', beforeError || afterError);
-    }
-
-    if (!beforeEvidence) {
+    // Authenticated user with role "collector" must be the assigned collector
+    if (userData.role === 'collector' && requestData.collector_id !== user.id) {
       const response: ApiResponse<null> = {
         success: false,
         data: null,
         error: {
-          code: 'MISSING_EVIDENCE',
-          message: 'RESIDENT_BEFORE evidence is missing for this request.'
+          code: 'FORBIDDEN',
+          message: 'You are not authorized to verify this collection request.'
         }
       };
-      return NextResponse.json(response, { status: 400 });
+      return NextResponse.json(response, { status: 403 });
     }
 
-    if (!afterEvidence) {
-      const response: ApiResponse<null> = {
-        success: false,
-        data: null,
-        error: {
-          code: 'MISSING_EVIDENCE',
-          message: 'COLLECTOR_AFTER evidence is missing for this request.'
-        }
-      };
-      return NextResponse.json(response, { status: 400 });
-    }
-
-    let decision: 'verified' | 'rejected';
-    let analysis: string;
-    let confidenceScore: number;
-
-    if (manualDecision) {
-      decision = manualDecision;
-      analysis = notes || `Manual verification by ${userData.role}: ${manualDecision}`;
-      confidenceScore = decision === 'verified' ? 100 : 0;
-    } else {
-      const beforeUrl = beforeEvidence.image_url;
-      const afterUrl = afterEvidence.image_url;
-
-      if (beforeUrl === afterUrl) {
-        decision = 'rejected';
-        analysis = 'Automated check failed: BEFORE and AFTER images are identical (same URL). Possible duplicate upload.';
-        confidenceScore = 90;
-      } else {
-        decision = 'verified';
-        analysis = 'Automated verification: Both BEFORE and AFTER evidence images are present and distinct. Waste collection appears to have occurred.';
-        confidenceScore = 75;
-      }
-    }
-
-    const { data: verificationResult, error: verificationError } = await supabase
-      .from('verification_results')
-      .insert({
-        evidence_id: afterEvidence.id,
-        decision,
-        confidence_score: confidenceScore,
-        analysis
-      })
-      .select('id, evidence_id, decision, confidence_score, analysis, verified_at')
-      .single();
-
-    if (verificationError || !verificationResult) {
-      console.error('[Verification] Database insert error:', verificationError);
-      const response: ApiResponse<null> = {
-        success: false,
-        data: null,
-        error: {
-          code: 'DATABASE_ERROR',
-          message: 'Failed to record verification result.'
-        }
-      };
-      return NextResponse.json(response, { status: 500 });
-    }
-
-    const { error: evidenceUpdateError } = await supabase
-      .from('evidence')
-      .update({ verification_status: decision })
-      .eq('id', afterEvidence.id);
-
-    if (evidenceUpdateError) {
-      console.error('[Verification] Evidence status update error:', evidenceUpdateError);
-    }
-
-    const newStatus = decision === 'verified' ? 'VERIFIED' : 'REJECTED';
-    const { error: requestUpdateError } = await supabase
-      .from('collection_requests')
-      .update({ status: newStatus })
-      .eq('id', collectionRequestId);
-
-    if (requestUpdateError) {
-      console.error('[Verification] Collection request status update error:', requestUpdateError);
-      const response: ApiResponse<null> = {
-        success: false,
-        data: null,
-        error: {
-          code: 'DATABASE_ERROR',
-          message: 'Failed to update collection request status.'
-        }
-      };
-      return NextResponse.json(response, { status: 500 });
-    }
+    // Use shared verification function
+    const result = await verifyCollectionRequest(supabase, collectionRequestId, {
+      manualDecision,
+      notes: notes || `Manual verification by ${userData.role}: ${manualDecision}`
+    });
 
     const formattedData: VerificationResultDTO = {
-      id: verificationResult.id,
+      id: result.verificationResultId,
       collectionRequestId,
-      decision: verificationResult.decision,
-      analysis: verificationResult.analysis,
-      verifiedAt: verificationResult.verified_at
+      decision: result.decision,
+      analysis: result.analysis,
+      verifiedAt: new Date().toISOString()
     };
 
     const response: ApiResponse<VerificationResultDTO> = {
@@ -254,14 +159,34 @@ export async function POST(request: NextRequest) {
 
   } catch (err: unknown) {
     console.error('[POST /api/verification Unexpected Error]:', err);
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred during verification.';
+
+    // Map known errors to appropriate status codes
+    let status = 500;
+    let code = 'INTERNAL_SERVER_ERROR';
+
+    if (message.includes('COLLECTION_REQUEST_NOT_FOUND')) {
+      status = 404;
+      code = 'COLLECTION_REQUEST_NOT_FOUND';
+    } else if (message.includes('INVALID_REQUEST_STATE')) {
+      status = 400;
+      code = 'INVALID_REQUEST_STATE';
+    } else if (message.includes('MISSING_EVIDENCE')) {
+      status = 400;
+      code = 'MISSING_EVIDENCE';
+    } else if (message.includes('DATABASE_ERROR')) {
+      status = 500;
+      code = 'DATABASE_ERROR';
+    }
+
     const response: ApiResponse<null> = {
       success: false,
       data: null,
       error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'An unexpected error occurred during verification.'
+        code,
+        message: message.replace(/^[A-Z_]+: /, '')
       }
     };
-    return NextResponse.json(response, { status: 500 });
+    return NextResponse.json(response, { status });
   }
 }
