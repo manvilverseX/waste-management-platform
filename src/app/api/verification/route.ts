@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 403 });
     }
 
-    let body: { collectionRequestId: string; decision?: 'verified' | 'rejected'; notes?: string };
+    let body: { collectionRequestId: string; decision?: 'verified' | 'rejected'; manualDecision?: 'verified' | 'rejected'; notes?: string };
     try {
       body = await request.json();
     } catch {
@@ -76,7 +76,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 400 });
     }
 
-    const { collectionRequestId, decision: manualDecision, notes } = body;
+    const { collectionRequestId, decision, manualDecision: bodyManualDecision, notes } = body;
+    const manualDecision = decision || bodyManualDecision;
 
     if (!collectionRequestId) {
       const response: ApiResponse<null> = {
@@ -135,8 +136,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 403 });
     }
 
-    // Use shared verification function
-    const result = await verifyCollectionRequest(supabase, collectionRequestId, {
+    // Use shared verification function with service role client to allow status updates
+    const supabaseService = createServerSupabaseClient();
+    const result = await verifyCollectionRequest(supabaseService, collectionRequestId, {
       manualDecision,
       notes: notes || `Manual verification by ${userData.role}: ${manualDecision}`
     });

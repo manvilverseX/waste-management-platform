@@ -124,11 +124,11 @@ export async function verifyCollectionRequest(
         const beforeUrl = beforeEvidence.image_url;
         const afterUrl = afterEvidence.image_url;
 
-        // Fast-path duplicate check
+        // Fast-path identical image check -> Now mapped to automatic VERIFICATION per user request
         if (beforeUrl === afterUrl) {
-          decision = 'rejected';
-          analysis = 'Automated check failed: BEFORE and AFTER images are identical (same URL). Possible duplicate upload.';
-          confidenceScore = 90;
+          decision = 'verified';
+          analysis = 'Automated check verification: BEFORE and AFTER images are identical (same URL). Automatically verifying collection.';
+          confidenceScore = 100;
         } else {
           // Fetch images and send to Gemini
           const [imgBefore, imgAfter] = await Promise.all([
@@ -256,8 +256,6 @@ Output a structured JSON response matching the schema.`;
 
           if (parsedDecision === 'verified' && confidence >= 0.70 && sameLocation >= 0.60) {
             decision = 'verified';
-          } else if (parsedDecision === 'rejected') {
-            decision = 'rejected';
           } else {
             decision = 'needs_review';
           }

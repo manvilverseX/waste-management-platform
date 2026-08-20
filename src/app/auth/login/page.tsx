@@ -66,7 +66,7 @@ export default function LoginPage() {
     }
   };
 
-  const handleDevLogin = async (selectedRole: 'resident' | 'collector') => {
+  const handleDevLogin = async (selectedRole: 'resident' | 'collector' | 'municipality') => {
     setIsLoading(true);
     setError(null);
     try {
@@ -88,6 +88,8 @@ export default function LoginPage() {
 
       if (selectedRole === 'collector') {
         router.push('/collector');
+      } else if (selectedRole === 'municipality') {
+        router.push('/municipality');
       } else {
         router.push('/resident');
       }
@@ -208,24 +210,33 @@ export default function LoginPage() {
           {process.env.NODE_ENV === 'development' && (
             <div className="flex flex-col gap-2.5 mt-6 pt-5 border-t border-slate-100 dark:border-slate-800/80">
               <p className="text-2xs font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider text-center">Dev Auto Sign-In</p>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => handleDevLogin('resident')}
                   disabled={isLoading}
-                  className="py-2.5 px-3 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 hover:bg-emerald-500/5 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-450 rounded-xl text-2xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  className="py-2.5 px-2 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 hover:bg-emerald-500/5 text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-450 rounded-xl text-3xs font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                 >
-                  <User className="w-3.5 h-3.5" />
+                  <User className="w-3 h-3" />
                   Resident
                 </button>
                 <button
                   type="button"
                   onClick={() => handleDevLogin('collector')}
                   disabled={isLoading}
-                  className="py-2.5 px-3 border border-slate-200 dark:border-slate-800 hover:border-teal-500/50 hover:bg-teal-500/5 text-slate-700 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-450 rounded-xl text-2xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  className="py-2.5 px-2 border border-slate-200 dark:border-slate-800 hover:border-teal-500/50 hover:bg-teal-500/5 text-slate-700 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-450 rounded-xl text-3xs font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
                 >
-                  <Shield className="w-3.5 h-3.5" />
+                  <Shield className="w-3 h-3" />
                   Collector
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDevLogin('municipality')}
+                  disabled={isLoading}
+                  className="py-2.5 px-2 border border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 hover:bg-indigo-500/5 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-450 rounded-xl text-3xs font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  <Shield className="w-3 h-3" />
+                  Mun.
                 </button>
               </div>
             </div>

@@ -7,20 +7,31 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    let role: 'resident' | 'collector' = 'resident';
+    let role: 'resident' | 'collector' | 'municipality' = 'resident';
     try {
       const body = await request.json();
       if (body?.role === 'collector') {
         role = 'collector';
+      } else if (body?.role === 'municipality') {
+        role = 'municipality';
       }
     } catch {
       // Default to resident if request body is empty or invalid JSON
     }
 
-    const email = role === 'collector' ? 'collector-test@ecoclean.com' : 'resident-test@ecoclean.com';
-    const password = role === 'collector'
-      ? (process.env.TEST_COLLECTOR_PASSWORD || 'TempPass999!')
-      : (process.env.TEST_RESIDENT_PASSWORD || 'TempPass999!');
+    let email = 'resident-test@ecoclean.com';
+    if (role === 'collector') {
+      email = 'collector-test@ecoclean.com';
+    } else if (role === 'municipality') {
+      email = 'municipality-test@ecoclean.com';
+    }
+
+    let password = process.env.TEST_RESIDENT_PASSWORD || 'TempPass999!';
+    if (role === 'collector') {
+      password = process.env.TEST_COLLECTOR_PASSWORD || 'TempPass999!';
+    } else if (role === 'municipality') {
+      password = process.env.TEST_MUNICIPALITY_PASSWORD || 'TempPass999!';
+    }
 
     const supabaseAdmin = createServerSupabaseClient(); // Privileged service role client
 
@@ -55,12 +66,19 @@ export async function POST(request: NextRequest) {
       const userId = authData.user.id;
       targetUserId = userId;
 
+      let name = 'Test Resident';
+      if (role === 'collector') {
+        name = 'Test Collector';
+      } else if (role === 'municipality') {
+        name = 'Test Municipality';
+      }
+
       // Insert user profile into public.users
       const { error: userInsertError } = await supabaseAdmin
         .from('users')
         .insert({
           id: userId,
-          name: role === 'collector' ? 'Test Collector' : 'Test Resident',
+          name,
           email,
           role
         });
