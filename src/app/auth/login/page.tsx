@@ -54,7 +54,7 @@ export default function LoginPage() {
       if (userRole === 'collector') {
         router.push('/collector');
       } else if (userRole === 'municipality') {
-        router.push('/resident'); // Fall back to resident or municipality if created later
+        router.push('/municipality');
       } else {
         router.push('/resident');
       }
