@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { CollectionStatus, CollectionRequestDTO } from '@/types';
-import { 
-  CheckCircle2, 
-  Clock, 
-  XCircle, 
-  AlertTriangle, 
-  Truck, 
-  Package, 
+import {
+  CheckCircle2,
+  Clock,
+  XCircle,
+  AlertTriangle,
+  Truck,
+  Package,
   Sparkles,
   Calendar,
   Layers,
@@ -25,6 +25,89 @@ export const RecentRequestsList: React.FC = () => {
   const [requests, setRequests] = useState<CollectionRequestDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [expandedVerification, setExpandedVerification] = useState<{
+    analysis: string;
+    decision: 'verified' | 'rejected' | 'needs_review';
+  } | null>(null);
+  const [loadingVerification, setLoadingVerification] = useState(false);
+
+  useEffect(() => {
+    if (!selectedRequestId) {
+      setExpandedVerification(null);
+      return;
+    }
+
+    let active = true;
+    const fetchVerification = async () => {
+      setLoadingVerification(true);
+      try {
+        const { data: evidence, error: fetchErr } = await supabaseBrowserClient
+          .from('evidence')
+          .select(`
+            id,
+            verification_results (
+              id,
+              decision,
+              analysis,
+              verified_at
+            )
+          `)
+          .eq('collection_request_id', selectedRequestId)
+          .eq('evidence_type', 'COLLECTOR_AFTER')
+          .maybeSingle();
+
+        if (fetchErr) throw fetchErr;
+
+        if (active && evidence && evidence.verification_results) {
+          const results = Array.isArray(evidence.verification_results)
+            ? evidence.verification_results
+            : [evidence.verification_results];
+
+          if (results.length > 0) {
+            const sorted = [...results].sort((a, b) =>
+              new Date(b.verified_at).getTime() - new Date(a.verified_at).getTime()
+            );
+            setExpandedVerification({
+              analysis: sorted[0].analysis,
+              decision: sorted[0].decision
+            });
+          } else {
+            setExpandedVerification(null);
+          }
+        } else {
+          setExpandedVerification(null);
+        }
+      } catch (err) {
+        console.error('Error fetching verification details:', err);
+        if (active) setExpandedVerification(null);
+      } finally {
+        if (active) setLoadingVerification(false);
+      }
+    };
+
+    fetchVerification();
+    return () => {
+      active = false;
+    };
+  }, [selectedRequestId]);
+
+  const formatVerificationAnalysis = (analysisText: string): string => {
+    if (!analysisText) return 'No detailed explanation was provided.';
+
+    if (analysisText.includes('Gemini Analysis:')) {
+      const reasoningIndex = analysisText.indexOf('Reasoning:');
+      if (reasoningIndex !== -1) {
+        return analysisText.substring(reasoningIndex + 10).trim();
+      }
+      if (analysisText.includes('Automated check failed:')) {
+        return 'The uploaded before and after images appear to be identical. Verification could not confirm collection.';
+      }
+      return 'The automated verification scan flagged anomalies in the evidence photos. Awaiting manual confirmation.';
+    }
+
+    return analysisText;
+  };
 
   useEffect(() => {
     setIsMounted(true);
@@ -114,13 +197,13 @@ export const RecentRequestsList: React.FC = () => {
         return {
           color: 'text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20',
           icon: <Package className="w-3.5 h-3.5" />,
-          label: 'Collected'
+          label: 'Under Verification'
         };
       case 'ASSIGNED':
         return {
           color: 'text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
           icon: <Truck className="w-3.5 h-3.5" />,
-          label: 'Assigned'
+          label: 'Collector Assigned'
         };
       case 'PENDING':
         return {
@@ -181,12 +264,12 @@ export const RecentRequestsList: React.FC = () => {
         const isExpanded = selectedRequestId === request.id;
 
         return (
-          <div 
-            key={request.id} 
+          <div
+            key={request.id}
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
           >
             {/* List Row Header */}
-            <div 
+            <div
               onClick={() => setSelectedRequestId(isExpanded ? null : request.id)}
               className="p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer select-none"
             >
@@ -236,6 +319,50 @@ export const RecentRequestsList: React.FC = () => {
                         The AI agent compared the BEFORE and AFTER images and verified successful garbage collection. Reward points have been credited to your profile.
                       </p>
                     </div>
+                  </div>
+                )}
+
+                {request.status === 'COLLECTED' && (
+                  <div className="space-y-2">
+                    <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl flex items-start gap-2.5">
+                      <Clock className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold text-blue-700 dark:text-blue-450 block">Under Verification</span>
+                        <p className="text-slate-550 dark:text-slate-400 text-2xs mt-0.5 leading-relaxed">
+                          Your garbage has been collected. We're verifying the submitted evidence. Points will be credited after approval.
+                        </p>
+                      </div>
+                    </div>
+
+                    {!loadingVerification && expandedVerification && expandedVerification.decision === 'needs_review' && (
+                      <div className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-1">
+                        <span className="font-bold text-amber-700 dark:text-amber-450 block flex items-center gap-1">
+                          <Info className="w-3.5 h-3.5 text-amber-500" />
+                          Verification Progress Details
+                        </span>
+                        <p className="text-slate-550 dark:text-slate-450 text-2xs leading-relaxed font-semibold">
+                          {formatVerificationAnalysis(expandedVerification.analysis)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {request.status === 'REJECTED' && (
+                  <div className="p-3 bg-rose-500/5 border border-rose-500/10 rounded-xl space-y-1">
+                    <span className="font-bold text-rose-700 dark:text-rose-450 block">Why was this rejected?</span>
+                    <p className="text-slate-550 dark:text-slate-450 text-2xs leading-relaxed font-semibold">
+                      {loadingVerification ? (
+                        <span className="flex items-center gap-1.5 text-slate-400">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Retrieving verification details...
+                        </span>
+                      ) : expandedVerification ? (
+                        formatVerificationAnalysis(expandedVerification.analysis)
+                      ) : (
+                        'The uploaded evidence photos did not meet the validation requirements.'
+                      )}
+                    </p>
                   </div>
                 )}
 
