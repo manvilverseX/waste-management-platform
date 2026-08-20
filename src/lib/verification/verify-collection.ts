@@ -12,6 +12,25 @@ export interface VerifyCollectionResult {
   confidenceScore: number;
 }
 
+// Configurable constants for GPS matching thresholds (in meters)
+export const GPS_THRESHOLD = {
+  MATCH: 100,
+  NEAR: 300
+};
+
+// Haversine formula to compute geographic distance in meters
+function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000; // Earth radius in meters
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 function getPathFromUrl(url: string): string {
   const parts = url.split('/storage/v1/object/public/evidence/');
   if (parts.length > 1) {
@@ -78,14 +97,14 @@ export async function verifyCollectionRequest(
   // 3. Retrieve the associated evidence records
   const { data: beforeEvidence, error: beforeError } = await supabase
     .from('evidence')
-    .select('id, image_url, uploaded_at, verification_status')
+    .select('id, image_url, uploaded_at, verification_status, latitude, longitude')
     .eq('collection_request_id', collectionRequestId)
     .eq('evidence_type', 'RESIDENT_BEFORE')
     .maybeSingle();
 
   const { data: afterEvidence, error: afterError } = await supabase
     .from('evidence')
-    .select('id, image_url, uploaded_at, verification_status')
+    .select('id, image_url, uploaded_at, verification_status, latitude, longitude')
     .eq('collection_request_id', collectionRequestId)
     .eq('evidence_type', 'COLLECTOR_AFTER')
     .maybeSingle();
@@ -102,32 +121,56 @@ export async function verifyCollectionRequest(
     throw new Error('MISSING_EVIDENCE: COLLECTOR_AFTER evidence is missing for this request.');
   }
 
-  // 4. Perform verification logic
-  let decision: 'verified' | 'rejected' | 'needs_review';
-  let analysis: string;
-  let confidenceScore: number;
+  // 4. Calculate GPS Distance Verification Signal
+  let gpsDistance: number | null = null;
+  let gpsDecision: 'MATCH' | 'NEAR' | 'MISMATCH' | 'UNAVAILABLE' = 'UNAVAILABLE';
+
+  if (
+    beforeEvidence.latitude !== null && beforeEvidence.longitude !== null &&
+    afterEvidence.latitude !== null && afterEvidence.longitude !== null
+  ) {
+    gpsDistance = calculateHaversineDistance(
+      beforeEvidence.latitude,
+      beforeEvidence.longitude,
+      afterEvidence.latitude,
+      afterEvidence.longitude
+    );
+
+    if (gpsDistance <= GPS_THRESHOLD.MATCH) {
+      gpsDecision = 'MATCH';
+    } else if (gpsDistance <= GPS_THRESHOLD.NEAR) {
+      gpsDecision = 'NEAR';
+    } else {
+      gpsDecision = 'MISMATCH';
+    }
+  }
+
+  // 5. Perform image verification logic
+  let imageDecision: 'verified' | 'rejected' | 'needs_review' = 'needs_review';
+  let imageAnalysis = '';
+  let confidenceScore = 0;
 
   if (manualDecision) {
-    decision = manualDecision;
-    analysis = notes || `Manual verification: ${manualDecision}`;
-    confidenceScore = decision === 'verified' ? 100 : 0;
+    imageDecision = manualDecision;
+    imageAnalysis = notes || `Manual verification: ${manualDecision}`;
+    confidenceScore = imageDecision === 'verified' ? 100 : 0;
   } else {
     // Automated Gemini Verification Flow
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.warn('[verifyCollectionRequest] GEMINI_API_KEY environment variable is not defined. Defaulting to safe review.');
-      decision = 'needs_review';
-      analysis = 'Verification requires manual review. Reason: Gemini API Key is not configured on the server.';
+      imageDecision = 'needs_review';
+      imageAnalysis = 'Verification requires manual review. Reason: Gemini API Key is not configured on the server.';
       confidenceScore = 0;
     } else {
       try {
         const beforeUrl = beforeEvidence.image_url;
         const afterUrl = afterEvidence.image_url;
 
-        // Fast-path identical image check -> Now mapped to automatic VERIFICATION per user request
+        // Fast-path identical image check
         if (beforeUrl === afterUrl) {
-          decision = 'verified';
-          analysis = 'Automated check verification: BEFORE and AFTER images are identical (same URL). Automatically verifying collection.';
+          imageDecision = 'verified';
+          imageAnalysis = 'Automated check verification: BEFORE and AFTER images are identical (same URL). Automatically verifying collection.';
           confidenceScore = 100;
         } else {
           // Fetch images and send to Gemini
@@ -244,44 +287,67 @@ Output a structured JSON response matching the schema.`;
 
           const resultObj = JSON.parse(responseText);
 
-          // Validate fields exist
           if (!resultObj.decision || typeof resultObj.confidence !== 'number') {
             throw new Error('SCHEMA_VALIDATION_FAILURE: Gemini response missing decision or confidence.');
           }
 
-          // Apply decision policy
           const parsedDecision = resultObj.decision;
           const confidence = resultObj.confidence;
           const sameLocation = resultObj.same_location_likelihood ?? 1.0;
 
           if (parsedDecision === 'verified' && confidence >= 0.70 && sameLocation >= 0.60) {
-            decision = 'verified';
+            imageDecision = 'verified';
           } else {
-            decision = 'needs_review';
+            imageDecision = 'needs_review';
           }
 
-          analysis = `Gemini Analysis: Decision=${resultObj.decision}, Confidence=${resultObj.confidence * 100}%, SameLocation=${sameLocation * 100}%. Reasoning: ${resultObj.reasoning}`;
+          imageAnalysis = `Gemini Analysis: Decision=${resultObj.decision}, Confidence=${resultObj.confidence * 100}%, SameLocation=${sameLocation * 100}%. Reasoning: ${resultObj.reasoning}`;
           confidenceScore = confidence * 100;
         }
       } catch (err: any) {
         console.error('[verifyCollectionRequest] Automated verification failed, falling back to manual review:', err);
-        decision = 'needs_review';
-        analysis = `Automated verification error (falling back to manual review): ${err.message || 'Unknown error'}`;
+        imageDecision = 'needs_review';
+        imageAnalysis = `Automated verification error (falling back to manual review): ${err.message || 'Unknown error'}`;
         confidenceScore = 0;
       }
     }
   }
 
-  // 5. Insert the verification result
+  // 6. Combine Image & GPS verification signals
+  let decision: 'verified' | 'rejected' | 'needs_review' = imageDecision;
+  let analysis = imageAnalysis;
+
+  if (!manualDecision) {
+    if (imageDecision === 'verified') {
+      if (gpsDecision === 'MISMATCH') {
+        decision = 'needs_review'; // GPS discrepancy triggers manual review!
+        analysis = `${imageAnalysis} | [GPS Verification failed: MISMATCH (distance: ${gpsDistance?.toFixed(1)}m exceeds threshold). Gated for manual review]`;
+      } else if (gpsDecision === 'NEAR') {
+        analysis = `${imageAnalysis} | [GPS Verification: NEAR (distance: ${gpsDistance?.toFixed(1)}m. Auto-verified)]`;
+      } else if (gpsDecision === 'MATCH') {
+        analysis = `${imageAnalysis} | [GPS Verification: MATCH (distance: ${gpsDistance?.toFixed(1)}m. Auto-verified)]`;
+      } else {
+        analysis = `${imageAnalysis} | [GPS Verification: UNAVAILABLE (Missing location coordinates. Defaulting to image-only verification)]`;
+      }
+    } else {
+      if (gpsDecision !== 'UNAVAILABLE') {
+        analysis = `${imageAnalysis} | [GPS: ${gpsDecision} (distance: ${gpsDistance?.toFixed(1)}m)]`;
+      }
+    }
+  }
+
+  // 7. Insert the verification result
   const { data: verificationResult, error: verificationError } = await supabase
     .from('verification_results')
     .insert({
       evidence_id: afterEvidence.id,
       decision,
       confidence_score: confidenceScore,
-      analysis
+      analysis,
+      gps_distance: gpsDistance,
+      gps_decision: gpsDecision
     })
-    .select('id, evidence_id, decision, confidence_score, analysis, verified_at')
+    .select('id, evidence_id, decision, confidence_score, analysis, verified_at, gps_distance, gps_decision')
     .single();
 
   if (verificationError || !verificationResult) {
@@ -289,7 +355,7 @@ Output a structured JSON response matching the schema.`;
     throw new Error('DATABASE_ERROR: Failed to record verification result.');
   }
 
-  // 6. Update the relevant evidence verification status (only if verified or rejected)
+  // 8. Update the relevant evidence verification status (only if verified or rejected)
   if (decision === 'verified' || decision === 'rejected') {
     const { error: evidenceUpdateError } = await supabase
       .from('evidence')
@@ -300,7 +366,7 @@ Output a structured JSON response matching the schema.`;
       console.error('[verifyCollectionRequest] Evidence status update error:', evidenceUpdateError);
     }
 
-    // 7. Update the collection request status to VERIFIED or REJECTED
+    // 9. Update the collection request status to VERIFIED or REJECTED
     const newStatus = decision === 'verified' ? 'VERIFIED' : 'REJECTED';
     const { error: requestUpdateError } = await supabase
       .from('collection_requests')
@@ -312,8 +378,6 @@ Output a structured JSON response matching the schema.`;
       throw new Error('DATABASE_ERROR: Failed to update collection request status.');
     }
   } else {
-    // If it is 'needs_review', we leave evidence status as 'pending' and request status as 'COLLECTED'
-    // This allows collectors or municipality to review and manually override/verify it later.
     console.log(`[verifyCollectionRequest] Request ${collectionRequestId} requires manual review. Status remains COLLECTED.`);
   }
 

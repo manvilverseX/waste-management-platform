@@ -188,6 +188,49 @@ export const CollectorDashboard: React.FC = () => {
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [isSuccessState, setIsSuccessState] = useState(false);
 
+  // Collector GPS States
+  const [collectorLatitude, setCollectorLatitude] = useState<number | null>(null);
+  const [collectorLongitude, setCollectorLongitude] = useState<number | null>(null);
+  const [collectorGpsAccuracy, setCollectorGpsAccuracy] = useState<number | null>(null);
+  const [collectorGpsTimestamp, setCollectorGpsTimestamp] = useState<string | null>(null);
+
+  // Fetch location proactively when modal is opened
+  useEffect(() => {
+    if (isCollectModalOpen) {
+      setCollectorLatitude(null);
+      setCollectorLongitude(null);
+      setCollectorGpsAccuracy(null);
+      setCollectorGpsTimestamp(null);
+
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            setCollectorLatitude(position.coords.latitude);
+            setCollectorLongitude(position.coords.longitude);
+            setCollectorGpsAccuracy(position.coords.accuracy);
+            setCollectorGpsTimestamp(new Date(position.timestamp).toISOString());
+          },
+          (err) => {
+            console.warn('[Collector Geolocation mount high-accuracy error, trying fallback]:', err);
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                setCollectorLatitude(pos.coords.latitude);
+                setCollectorLongitude(pos.coords.longitude);
+                setCollectorGpsAccuracy(pos.coords.accuracy);
+                setCollectorGpsTimestamp(new Date(pos.timestamp).toISOString());
+              },
+              (err2) => {
+                console.warn('[Collector Geolocation fallback error]:', err2);
+              },
+              { enableHighAccuracy: false, timeout: 8000 }
+            );
+          },
+          { enableHighAccuracy: true, timeout: 5000 }
+        );
+      }
+    }
+  }, [isCollectModalOpen]);
+
   // HTML5 Camera States
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -426,6 +469,16 @@ export const CollectorDashboard: React.FC = () => {
       formData.append('file', selectedFile);
       formData.append('collectionRequestId', activeRequest.id);
       formData.append('evidenceType', 'COLLECTOR_AFTER');
+      if (collectorLatitude !== null && collectorLongitude !== null) {
+        formData.append('latitude', collectorLatitude.toString());
+        formData.append('longitude', collectorLongitude.toString());
+        if (collectorGpsAccuracy !== null) {
+          formData.append('gpsAccuracy', collectorGpsAccuracy.toString());
+        }
+        if (collectorGpsTimestamp !== null) {
+          formData.append('gpsCapturedAt', collectorGpsTimestamp);
+        }
+      }
 
       const res = await fetch('/api/evidence', {
         method: 'POST',

@@ -17,6 +17,42 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // GPS State
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const [gpsTimestamp, setGpsTimestamp] = useState<string | null>(null);
+
+  // Fetch location proactively on mount
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setLatitude(position.coords.latitude);
+          setLongitude(position.coords.longitude);
+          setGpsAccuracy(position.coords.accuracy);
+          setGpsTimestamp(new Date(position.timestamp).toISOString());
+        },
+        (err) => {
+          console.warn('[Resident Geolocation mount high-accuracy error, trying fallback]:', err);
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              setLatitude(pos.coords.latitude);
+              setLongitude(pos.coords.longitude);
+              setGpsAccuracy(pos.coords.accuracy);
+              setGpsTimestamp(new Date(pos.timestamp).toISOString());
+            },
+            (err2) => {
+              console.warn('[Resident Geolocation fallback error]:', err2);
+            },
+            { enableHighAccuracy: false, timeout: 8000 }
+          );
+        },
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    }
+  }, []);
+
   // HTML5 MediaStream Camera states
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -189,6 +225,16 @@ export const RequestCollectionForm: React.FC<Props> = ({ onClose }) => {
       formData.append('file', selectedFile);
       formData.append('collectionRequestId', createdRequestId);
       formData.append('evidenceType', 'RESIDENT_BEFORE');
+      if (latitude !== null && longitude !== null) {
+        formData.append('latitude', latitude.toString());
+        formData.append('longitude', longitude.toString());
+        if (gpsAccuracy !== null) {
+          formData.append('gpsAccuracy', gpsAccuracy.toString());
+        }
+        if (gpsTimestamp !== null) {
+          formData.append('gpsCapturedAt', gpsTimestamp);
+        }
+      }
 
       const evidenceResponse = await fetch('/api/evidence', {
         method: 'POST',

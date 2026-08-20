@@ -50,6 +50,17 @@ export async function POST(request: NextRequest) {
     const collectionRequestId = formData.get('collectionRequestId');
     const evidenceType = formData.get('evidenceType');
 
+    // Parse optional GPS parameters
+    const latitudeStr = formData.get('latitude');
+    const longitudeStr = formData.get('longitude');
+    const gpsAccuracyStr = formData.get('gpsAccuracy');
+    const gpsCapturedAtStr = formData.get('gpsCapturedAt');
+
+    const latitude = (latitudeStr && !isNaN(Number(latitudeStr))) ? Number(latitudeStr) : null;
+    const longitude = (longitudeStr && !isNaN(Number(longitudeStr))) ? Number(longitudeStr) : null;
+    const gpsAccuracy = (gpsAccuracyStr && !isNaN(Number(gpsAccuracyStr))) ? Number(gpsAccuracyStr) : null;
+    const gpsCapturedAt = gpsCapturedAtStr ? gpsCapturedAtStr.toString() : null;
+
     if (!file || !(file instanceof File)) {
       const response: ApiResponse<null> = {
         success: false,
@@ -294,7 +305,11 @@ export async function POST(request: NextRequest) {
         evidence_type: evidenceType,
         image_url: publicUrl,
         uploaded_by: user.id,
-        verification_status: 'pending'
+        verification_status: 'pending',
+        latitude,
+        longitude,
+        gps_accuracy: gpsAccuracy,
+        gps_captured_at: gpsCapturedAt
       })
       .select(`
         id,
@@ -303,7 +318,11 @@ export async function POST(request: NextRequest) {
         image_url,
         uploaded_by,
         uploaded_at,
-        verification_status
+        verification_status,
+        latitude,
+        longitude,
+        gps_accuracy,
+        gps_captured_at
       `)
       .single();
 
