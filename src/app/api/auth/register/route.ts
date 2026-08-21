@@ -56,14 +56,13 @@ export async function POST(request: NextRequest) {
       }, { status: 404 });
     }
 
-    // Create the Supabase Auth user
-    const { data: authData, error: authError } = await supabase.auth.signUp({
+    // Create the Supabase Auth user using admin API to avoid email rate limits
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password,
-      options: {
-        data: {
-          name: fullName
-        }
+      email_confirm: true,
+      user_metadata: {
+        name: fullName
       }
     });
 
@@ -80,24 +79,6 @@ export async function POST(request: NextRequest) {
     }
 
     createdAuthUserId = authData.user.id;
-
-    // Auto-confirm user email for immediate access using admin permissions
-    const { error: confirmError } = await supabase.auth.admin.updateUserById(createdAuthUserId, {
-      email_confirm: true
-    });
-    if (confirmError) {
-      console.error('[Register API Auto-Confirm Error]:', confirmError);
-      // Rollback the created auth user
-      await supabase.auth.admin.deleteUser(createdAuthUserId);
-      return NextResponse.json({
-        success: false,
-        data: null,
-        error: {
-          code: 'AUTH_ERROR',
-          message: 'Failed to verify account creation. Please try again.'
-        }
-      }, { status: 500 });
-    }
 
     // Create public.users profile (force role 'resident' — never client-supplied)
     const { error: profileError } = await supabase
@@ -147,33 +128,10 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // Handle email confirmation requirement
-    if (!authData.session) {
-      return NextResponse.json({
-        success: true,
-        data: {
-          sessionRequired: true,
-          message: 'Registration successful. Please check your email to confirm your account.'
-        },
-        error: null
-      }, { status: 201 });
-    }
-
-    // Email confirmation not required, return active session
+    // Registration successful, user is auto-confirmed and can now log in
     return NextResponse.json({
       success: true,
-      data: {
-        sessionRequired: false,
-        session: {
-          accessToken: authData.session.access_token,
-          refreshToken: authData.session.refresh_token,
-          user: {
-            id: authData.user.id,
-            email: authData.user.email,
-            name: fullName
-          }
-        }
-      },
+      data: null,
       error: null
     }, { status: 201 });
 
