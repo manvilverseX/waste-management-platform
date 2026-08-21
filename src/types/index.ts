@@ -83,11 +83,13 @@ export interface DumpingReportDTO {
   reportedBy: string;
   communityId: string;
   imageUrl: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   description: string;
   status: 'reported' | 'investigating' | 'cleared' | 'rejected';
   reportedAt: string;
+  gpsAccuracy?: number | null;
+  gpsCapturedAt?: string | null;
 }
 
 

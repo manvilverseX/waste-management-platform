@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response, { status: 400 });
     }
 
-    const { imageUrl, latitude, longitude, description } = validationResult.data;
+    const { imageUrl, latitude, longitude, description, gpsAccuracy, gpsCapturedAt } = validationResult.data;
 
     // 3. Verify user is in a community
     const { data: membership, error: membershipError } = await supabase
@@ -76,9 +76,11 @@ export async function POST(request: NextRequest) {
         latitude,
         longitude,
         description,
-        status: 'reported'
+        status: 'reported',
+        gps_accuracy: gpsAccuracy,
+        gps_captured_at: gpsCapturedAt
       })
-      .select('id, reported_by, community_id, image_url, latitude, longitude, description, status, reported_at')
+      .select('id, reported_by, community_id, image_url, latitude, longitude, description, status, reported_at, gps_accuracy, gps_captured_at')
       .single();
 
     if (insertError || !newReport) {
@@ -104,7 +106,9 @@ export async function POST(request: NextRequest) {
       longitude: newReport.longitude,
       description: newReport.description,
       status: newReport.status as any,
-      reportedAt: newReport.reported_at
+      reportedAt: newReport.reported_at,
+      gpsAccuracy: newReport.gps_accuracy,
+      gpsCapturedAt: newReport.gps_captured_at
     };
 
     const response: ApiResponse<DumpingReportDTO> = {
@@ -154,7 +158,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(response, { status: 401 });
     }
 
-    // 2. Get user community membership
+    // 2. Fetch user role
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    const isMunicipality = userData?.role === 'municipality';
+
+    // 3. Get user community membership
     const { data: membership, error: membershipError } = await supabase
       .from('community_memberships')
       .select('community_id')
@@ -175,10 +188,10 @@ export async function GET(request: NextRequest) {
 
     const communityId = membership.community_id;
 
-    // 3. Fetch community dumping reports
+    // 4. Fetch community dumping reports
     const { data: reports, error: fetchError } = await supabase
       .from('dumping_reports')
-      .select('id, reported_by, community_id, image_url, latitude, longitude, description, status, reported_at')
+      .select('id, reported_by, community_id, image_url, latitude, longitude, description, status, reported_at, gps_accuracy, gps_captured_at')
       .eq('community_id', communityId)
       .order('reported_at', { ascending: false });
 
@@ -195,18 +208,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(response, { status: 500 });
     }
 
-    // 4. Format to DTO list
-    const formattedData: DumpingReportDTO[] = (reports || []).map((report) => ({
-      id: report.id,
-      reportedBy: report.reported_by,
-      communityId: report.community_id,
-      imageUrl: report.image_url,
-      latitude: report.latitude,
-      longitude: report.longitude,
-      description: report.description,
-      status: report.status as any,
-      reportedAt: report.reported_at
-    }));
+    // 5. Format to DTO list with privacy masking
+    const formattedData: DumpingReportDTO[] = (reports || []).map((report) => {
+      const isOwner = report.reported_by === user.id;
+      const canAccessExactCoords = isMunicipality || isOwner;
+
+      return {
+        id: report.id,
+        reportedBy: report.reported_by,
+        communityId: report.community_id,
+        imageUrl: report.image_url,
+        latitude: canAccessExactCoords ? report.latitude : null,
+        longitude: canAccessExactCoords ? report.longitude : null,
+        description: report.description,
+        status: report.status as any,
+        reportedAt: report.reported_at,
+        gpsAccuracy: canAccessExactCoords ? report.gps_accuracy : null,
+        gpsCapturedAt: canAccessExactCoords ? report.gps_captured_at : null
+      };
+    });
 
     const response: ApiResponse<DumpingReportDTO[]> = {
       success: true,

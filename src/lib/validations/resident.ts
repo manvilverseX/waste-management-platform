@@ -34,7 +34,9 @@ export const createDumpingReportSchema = z.object({
   }),
   description: z.string().min(5, {
     message: 'Description must be at least 5 characters long'
-  })
+  }),
+  gpsAccuracy: z.number().optional().nullable(),
+  gpsCapturedAt: z.string().optional().nullable()
 });
 
 export type CreateDumpingReportInput = z.infer<typeof createDumpingReportSchema>;
