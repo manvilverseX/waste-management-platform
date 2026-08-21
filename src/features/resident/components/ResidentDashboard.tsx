@@ -19,6 +19,7 @@ import {
 import { RequestCollectionForm } from './RequestCollectionForm';
 import { RecentRequestsList } from './RecentRequestsList';
 import { ReportDumpingForm } from './ReportDumpingForm';
+import { LaunchCampaignTab } from './LaunchCampaignTab';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
 import { RewardTransactionDTO, RewardSummaryDTO, CommunityProfileDTO, CommunityScorecardDTO } from '@/types';
 
@@ -26,7 +27,7 @@ export const ResidentDashboard: React.FC = () => {
   const router = useRouter();
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showDumpingForm, setShowDumpingForm] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community' | 'campaigns'>('overview');
   const [profile, setProfile] = useState<{ name: string; email: string } | null>(null);
   const [transactions, setTransactions] = useState<RewardTransactionDTO[]>([]);
   const [summary, setSummary] = useState<RewardSummaryDTO | null>(null);
@@ -375,6 +376,16 @@ export const ResidentDashboard: React.FC = () => {
           >
             Community Scorecard
           </button>
+          <button
+            onClick={() => setActiveTab('campaigns')}
+            className={`pb-4 text-sm font-bold border-b-2 transition-all relative ${
+              activeTab === 'campaigns'
+                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+            }`}
+          >
+            Launch Campaign
+          </button>
         </div>
 
         {/* Tab Contents */}
@@ -587,6 +598,12 @@ export const ResidentDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+          )}
+          {activeTab === 'campaigns' && (
+            <LaunchCampaignTab
+              communityName={community?.name || null}
+              loadingCommunity={loadingCommunity}
+            />
           )}
         </div>
       </main>
