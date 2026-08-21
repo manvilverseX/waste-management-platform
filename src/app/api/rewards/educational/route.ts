@@ -64,7 +64,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 3. Award 10 points
-    const { error: insertError } = await supabase
+    const systemSupabase = createServerSupabaseClient();
+    const { error: insertError } = await systemSupabase
       .from('reward_transactions')
       .insert({
         user_id: user.id,
