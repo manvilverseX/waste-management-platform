@@ -81,6 +81,24 @@ export async function POST(request: NextRequest) {
 
     createdAuthUserId = authData.user.id;
 
+    // Auto-confirm user email for immediate access using admin permissions
+    const { error: confirmError } = await supabase.auth.admin.updateUserById(createdAuthUserId, {
+      email_confirm: true
+    });
+    if (confirmError) {
+      console.error('[Register API Auto-Confirm Error]:', confirmError);
+      // Rollback the created auth user
+      await supabase.auth.admin.deleteUser(createdAuthUserId);
+      return NextResponse.json({
+        success: false,
+        data: null,
+        error: {
+          code: 'AUTH_ERROR',
+          message: 'Failed to verify account creation. Please try again.'
+        }
+      }, { status: 500 });
+    }
+
     // Create public.users profile (force role 'resident' — never client-supplied)
     const { error: profileError } = await supabase
       .from('users')
