@@ -61,7 +61,7 @@ export const MunicipalityDashboard: React.FC = () => {
   const [loadingProfile, setLoadingProfile] = useState(true);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'verification' | 'hotspots'>('verification');
+  const [activeTab, setActiveTab] = useState<'verification' | 'hotspots' | 'campaigns'>('verification');
 
   // Data states (verification requests)
   const [requests, setRequests] = useState<CollectionRequestItem[]>([]);
@@ -72,6 +72,11 @@ export const MunicipalityDashboard: React.FC = () => {
   const [hotspots, setHotspots] = useState<HotspotItem[]>([]);
   const [loadingHotspots, setLoadingHotspots] = useState(false);
   const [hotspotsError, setHotspotsError] = useState<string | null>(null);
+
+  // Data states (campaigns)
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+  const [campaignsError, setCampaignsError] = useState<string | null>(null);
 
   // Modal / Action states
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -258,13 +263,40 @@ export const MunicipalityDashboard: React.FC = () => {
     }
   };
 
+  const fetchCampaigns = async () => {
+    setLoadingCampaigns(true);
+    setCampaignsError(null);
+    try {
+      const { data: { session } } = await supabaseBrowserClient.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch('/api/municipality/campaigns', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+      const result = await res.json();
+      if (res.ok && result.success) {
+        setCampaigns(result.data || []);
+      } else {
+        setCampaignsError(result.error?.message || 'Failed to load campaigns.');
+      }
+    } catch (err: any) {
+      setCampaignsError(err.message || 'An error occurred loading campaigns.');
+    } finally {
+      setLoadingCampaigns(false);
+    }
+  };
+
   // Effect to load data based on active tab
   useEffect(() => {
     if (profile) {
       if (activeTab === 'verification') {
         fetchCollectedRequests();
-      } else {
+      } else if (activeTab === 'hotspots') {
         fetchHotspots();
+      } else if (activeTab === 'campaigns') {
+        fetchCampaigns();
       }
     }
   }, [profile, activeTab]);
@@ -430,21 +462,23 @@ export const MunicipalityDashboard: React.FC = () => {
         {/* Banner Title */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-850 dark:from-white dark:to-slate-250 bg-clip-text text-transparent">
-              {activeTab === 'verification' ? 'Manual Verification Dashboard' : 'Open Dumping Intelligence'}
+            <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-855 dark:from-white dark:to-slate-250 bg-clip-text text-transparent">
+              {activeTab === 'verification' ? 'Manual Verification Dashboard' : activeTab === 'hotspots' ? 'Open Dumping Intelligence' : 'Community Campaigns Monitor'}
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
               {activeTab === 'verification'
                 ? 'Review collected requests that triggered automated safety flags or require final approvals.'
-                : 'Aggregated reports of active illegal dumping hotspots clustered across community areas.'}
+                : activeTab === 'hotspots'
+                ? 'Aggregated reports of active illegal dumping hotspots clustered across community areas.'
+                : 'Monitor environmental cleanliness drives launched and completed by community residents.'}
             </p>
           </div>
           <button
-            onClick={activeTab === 'verification' ? fetchCollectedRequests : fetchHotspots}
-            disabled={activeTab === 'verification' ? loadingRequests : loadingHotspots}
+            onClick={activeTab === 'verification' ? fetchCollectedRequests : activeTab === 'hotspots' ? fetchHotspots : fetchCampaigns}
+            disabled={activeTab === 'verification' ? loadingRequests : activeTab === 'hotspots' ? loadingHotspots : loadingCampaigns}
             className="flex items-center justify-center gap-1.5 py-2 px-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/80 rounded-xl text-xs font-bold shadow-sm active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${(activeTab === 'verification' ? loadingRequests : loadingHotspots) ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${(activeTab === 'verification' ? loadingRequests : activeTab === 'hotspots' ? loadingHotspots : loadingCampaigns) ? 'animate-spin' : ''}`} />
             Refresh
           </button>
         </div>
@@ -470,6 +504,16 @@ export const MunicipalityDashboard: React.FC = () => {
             }`}
           >
             Dumping Hotspots ({hotspots.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('campaigns')}
+            className={`py-3 px-4 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
+              activeTab === 'campaigns'
+                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-slate-450 dark:text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Community Campaigns ({campaigns.length})
           </button>
         </div>
 
@@ -842,6 +886,122 @@ export const MunicipalityDashboard: React.FC = () => {
                       <div className="p-5 pt-0 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-3xs text-slate-400 dark:text-slate-500 mt-2">
                         <span>Latest: {new Date(h.latestReportAt).toLocaleString()}</span>
                         <span>Coords: {h.latitude.toFixed(5)}, {h.longitude.toFixed(5)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab content 3: Cleanliness Campaigns Monitoring */}
+        {activeTab === 'campaigns' && (
+          <div className="space-y-6">
+            {campaignsError && (
+              <div className="rounded-2xl bg-rose-50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 p-4 flex gap-3 text-rose-700 dark:text-rose-300 max-w-2xl">
+                <AlertCircle className="w-5.5 h-5.5 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-sm">Failed to load campaigns list</p>
+                  <p className="text-xs mt-1 opacity-90">{campaignsError}</p>
+                </div>
+              </div>
+            )}
+
+            {loadingCampaigns ? (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-500 gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl">
+                <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
+                <span className="text-xs">Fetching campaigns registry...</span>
+              </div>
+            ) : campaigns.length === 0 ? (
+              <div className="text-center py-16 text-slate-450 dark:text-slate-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl">
+                <p className="text-sm font-black">No cleanliness campaigns found</p>
+                <p className="text-2xs mt-1">Campaigns launched by community members will appear here.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-6">
+                {campaigns.map((c) => {
+                  const statusColors = {
+                    draft: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-450 border-slate-200 dark:border-slate-750',
+                    published: 'bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-450 border-blue-100 dark:border-blue-900/30',
+                    registration_open: 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-450 border-emerald-100 dark:border-emerald-900/30',
+                    completed: 'bg-indigo-50 dark:bg-indigo-950/20 text-indigo-600 dark:text-indigo-450 border-indigo-100 dark:border-indigo-900/30',
+                    cancelled: 'bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-450 border-rose-100 dark:border-rose-900/30'
+                  };
+
+                  const formattedStatus = c.status.replace('_', ' ').toUpperCase();
+
+                  return (
+                    <div key={c.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xs space-y-4">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800/80 pb-4">
+                        <div>
+                          <span className={`text-4xs px-2.5 py-0.5 rounded-full border tracking-widest font-extrabold ${statusColors[c.status as keyof typeof statusColors] || ''}`}>
+                            {formattedStatus}
+                          </span>
+                          <h3 className="text-base font-black text-slate-800 dark:text-white mt-2 leading-snug">{c.title}</h3>
+                          <p className="text-2xs text-slate-500 dark:text-slate-400 mt-1">{c.description}</p>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 text-center min-w-[240px]">
+                          <div className="bg-slate-50 dark:bg-slate-950/40 p-2 rounded-xl border border-slate-100 dark:border-slate-850">
+                            <span className="text-slate-400 text-4xs font-bold block uppercase">Registered</span>
+                            <span className="text-xs font-black text-slate-800 dark:text-white mt-0.5 block">{c.registeredCount}</span>
+                          </div>
+                          <div className="bg-emerald-500/5 p-2 rounded-xl border border-emerald-500/10">
+                            <span className="text-emerald-500 text-4xs font-bold block uppercase">Attended</span>
+                            <span className="text-xs font-black text-emerald-600 dark:text-emerald-450 mt-0.5 block">{c.attendedCount}</span>
+                          </div>
+                          <div className="bg-rose-500/5 p-2 rounded-xl border border-rose-500/10">
+                            <span className="text-rose-500 text-4xs font-bold block uppercase">Cancelled</span>
+                            <span className="text-xs font-black text-rose-600 dark:text-rose-450 mt-0.5 block">{c.cancelledCount}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2 text-2xs font-semibold text-slate-500 dark:text-slate-400">
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span>📅 Date:</span>
+                            <span className="text-slate-800 dark:text-slate-200">{new Date(c.campaignDate).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>⏰ Duration:</span>
+                            <span className="text-slate-800 dark:text-slate-200">{c.startTime.substring(0, 5)} – {c.endTime.substring(0, 5)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>📍 Location:</span>
+                            <span className="text-slate-800 dark:text-slate-200">{c.location}</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span>🏘️ Locality:</span>
+                            <span className="text-slate-800 dark:text-slate-200">{c.communityName}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>👤 Organizer:</span>
+                            <span className="text-slate-800 dark:text-slate-200 font-bold">{c.organizerName}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>🎯 Target Turnout:</span>
+                            <span className="text-slate-850 dark:text-slate-200">{c.expectedParticipants || '—'}</span>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-850 rounded-2xl p-4 space-y-2 flex flex-col justify-center">
+                          <div className="flex justify-between text-3xs font-extrabold uppercase text-slate-400">
+                            <span>Organizer Reward:</span>
+                            <span className={c.organizerPointsAwarded > 0 ? 'text-emerald-500' : 'text-slate-500'}>
+                              {c.organizerPointsAwarded > 0 ? '+1,000 pts' : 'Pending completion'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-3xs font-extrabold uppercase text-slate-400 mt-2">
+                            <span>Attendee Rewards:</span>
+                            <span className={c.participantPointsDistributed > 0 ? 'text-emerald-500' : 'text-slate-500'}>
+                              {c.participantPointsDistributed > 0 ? `+${c.participantPointsDistributed.toLocaleString()} pts total` : '0 pts'}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );

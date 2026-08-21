@@ -20,6 +20,7 @@ import { RequestCollectionForm } from './RequestCollectionForm';
 import { RecentRequestsList } from './RecentRequestsList';
 import { ReportDumpingForm } from './ReportDumpingForm';
 import { LaunchCampaignTab } from './LaunchCampaignTab';
+import { NotificationsTab } from './NotificationsTab';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
 import { RewardTransactionDTO, RewardSummaryDTO, CommunityProfileDTO, CommunityScorecardDTO } from '@/types';
 
@@ -27,7 +28,8 @@ export const ResidentDashboard: React.FC = () => {
   const router = useRouter();
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showDumpingForm, setShowDumpingForm] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community' | 'campaigns'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community' | 'campaigns' | 'notifications'>('overview');
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [profile, setProfile] = useState<{ name: string; email: string } | null>(null);
   const [transactions, setTransactions] = useState<RewardTransactionDTO[]>([]);
   const [summary, setSummary] = useState<RewardSummaryDTO | null>(null);
@@ -386,6 +388,21 @@ export const ResidentDashboard: React.FC = () => {
           >
             Launch Campaign
           </button>
+          <button
+            onClick={() => setActiveTab('notifications')}
+            className={`pb-4 text-sm font-bold border-b-2 transition-all relative flex items-center gap-1.5 ${
+              activeTab === 'notifications'
+                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+            }`}
+          >
+            <span>🔔 Notifications</span>
+            {unreadNotificationsCount > 0 && (
+              <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-extrabold text-white">
+                {unreadNotificationsCount}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Tab Contents */}
@@ -603,6 +620,11 @@ export const ResidentDashboard: React.FC = () => {
             <LaunchCampaignTab
               communityName={community?.name || null}
               loadingCommunity={loadingCommunity}
+            />
+          )}
+          {activeTab === 'notifications' && (
+            <NotificationsTab
+              onUnreadCountChange={(count) => setUnreadNotificationsCount(count)}
             />
           )}
         </div>
