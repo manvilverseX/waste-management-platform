@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Mail, Lock, Loader2, Leaf, Eye, EyeOff, AlertCircle, UserPlus } from 'lucide-react';
+import { Mail, Lock, Loader2, Eye, EyeOff, AlertCircle, UserPlus, Recycle } from 'lucide-react';
 import Link from 'next/link';
+import { BackgroundMesh } from '@/features/shared/components/BackgroundMesh';
 
 const initialForm = {
   fullName: '',
@@ -17,9 +18,9 @@ export default function RegisterPage() {
   const router = useRouter();
 
   const [form, setForm] = useState(initialForm);
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showPassword, setShowPassword] = useState(false);
 
   const [communities, setCommunities] = useState<Array<{ id: string; name: string }>>([]);
   const [loadingCommunities, setLoadingCommunities] = useState(true);
@@ -27,31 +28,24 @@ export default function RegisterPage() {
 
   useEffect(() => {
     let active = true;
-    const fetchCommunities = async () => {
+    const loadCommunities = async () => {
       try {
         const res = await fetch('/api/communities');
-        if (!res.ok) throw new Error('Failed to load communities.');
-        const result = await res.json();
-        if (result.success && result.data && active) {
-          setCommunities(result.data);
+        const data = await res.json();
+        if (active && data.success) {
+          setCommunities(data.data || []);
         } else if (active) {
-          throw new Error(result.error?.message || 'Failed to load communities.');
+          setCommunitiesError(data.error?.message || 'Failed to load communities.');
         }
-      } catch (err: unknown) {
-        if (active) {
-          const msg = err instanceof Error ? err.message : 'Could not load communities. Please refresh.';
-          setCommunitiesError(msg);
-        }
+      } catch (err) {
+        console.error('Failed to load communities index:', err);
+        if (active) setCommunitiesError('Could not load communities. Please refresh.');
       } finally {
-        if (active) {
-          setLoadingCommunities(false);
-        }
+        if (active) setLoadingCommunities(false);
       }
     };
-    fetchCommunities();
-    return () => {
-      active = false;
-    };
+    loadCommunities();
+    return () => { active = false; };
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -65,30 +59,20 @@ export default function RegisterPage() {
     e.preventDefault();
     setError(null);
 
-    // Basic validation
-    if (!form.fullName || form.fullName.length < 2) {
-      setError('Full Name must be at least 2 characters.');
+    const { fullName, email, password, confirmPassword, communityId } = form;
+
+    if (!fullName || !email || !password || !confirmPassword || !communityId) {
+      setError('Please fill in all registration fields.');
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!form.email || !emailRegex.test(form.email)) {
-      setError('Please enter a valid email address.');
-      return;
-    }
-
-    if (!form.password || form.password.length < 6) {
-      setError('Password must be at least 6 characters.');
-      return;
-    }
-
-    if (form.password !== form.confirmPassword) {
+    if (password !== confirmPassword) {
       setError('Passwords do not match.');
       return;
     }
 
-    if (!form.communityId) {
-      setError('Please select a community.');
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters long.');
       return;
     }
 
@@ -98,40 +82,16 @@ export default function RegisterPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fullName: form.fullName,
-          email: form.email,
-          password: form.password,
-          communityId: form.communityId
-        })
+        body: JSON.stringify({ fullName, email, password, communityId }),
       });
 
       const result = await res.json();
 
       if (!res.ok || !result.success) {
-        const message = result?.error?.message || 'Registration failed. Please try again.';
-        setError(message);
+        setError(result?.error?.message || 'Registration failed. Email might already be taken.');
         return;
       }
 
-      // If email confirmation is required
-      if (result.data?.sessionRequired) {
-        router.push('/auth/verify-email');
-        return;
-      }
-
-      // Auto-login if session returned
-      if (result.data?.session) {
-        const { supabaseBrowserClient } = await import('@/lib/supabase/client');
-        await supabaseBrowserClient.auth.setSession({
-          access_token: result.data.session.accessToken,
-          refresh_token: result.data.session.refreshToken,
-        });
-        router.push('/resident');
-        return;
-      }
-
-      // Fallback: ask user to login
       router.push('/auth/login?registered=true');
 
     } catch (err: unknown) {
@@ -143,29 +103,38 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased">
-      <div className="w-full max-w-md mx-4">
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl p-8">
-          {/* Logo & Header */}
-          <div className="flex flex-col items-center text-center mb-8">
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/10 mb-3">
-              <Leaf className="w-6 h-6 text-white" />
-            </div>
-            <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-850 dark:from-white dark:to-slate-200 bg-clip-text text-transparent">
-              Join EcoClean
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-              Create your Resident account to start managing waste collection and earning rewards.
-            </p>
-          </div>
+    <div className="min-h-dvh relative flex items-center justify-center overflow-hidden bg-[#14171A] py-8">
+      {/* Jali background texture */}
+      <div className="jali-overlay" aria-hidden="true" />
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Aurora mesh background layer */}
+      <BackgroundMesh role="auth" />
+
+      <div className="relative z-10 w-full max-w-md mx-4 sc-anim-fade-up">
+        {/* Brand mark */}
+        <div className="flex flex-col items-center text-center mb-8">
+          <div className="h-14 w-14 rounded-2xl bg-forest-700 flex items-center justify-center shadow-lg mb-4"
+            style={{ boxShadow: '0 8px 32px rgba(22,163,74,0.35)' }}>
+            <Recycle className="w-7 h-7 text-white" />
+          </div>
+          <h1 className="font-display text-3xl font-extrabold tracking-tight text-white">
+            Join the Circuit
+          </h1>
+          <p className="text-charcoal-400 text-sm mt-2 max-w-xs">
+            Create your resident account to start making a difference in your community.
+          </p>
+        </div>
+
+        {/* Form card */}
+        <div className="sc-glass sc-shadow-stack p-8" style={{ borderRadius: '24px' }}>
+          <p className="text-charcoal-300 text-xs font-bold uppercase tracking-widest mb-6">
+            Create your account
+          </p>
+
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            {/* Full Name */}
             <div>
-              <label
-                htmlFor="fullName"
-                className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1"
-              >
+              <label htmlFor="fullName" className="block text-charcoal-300 text-xs font-semibold mb-1.5">
                 Full Name
               </label>
               <input
@@ -175,23 +144,19 @@ export default function RegisterPage() {
                 autoComplete="name"
                 value={form.fullName}
                 onChange={handleInputChange}
-                className="w-full pl-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors"
+                className="sc-input"
                 placeholder="Enter your full name"
                 required
               />
             </div>
 
+            {/* Email */}
             <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1"
-              >
+              <label htmlFor="email" className="block text-charcoal-300 text-xs font-semibold mb-1.5">
                 Email address
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Mail className="w-5 h-5 text-slate-400" />
-                </div>
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal-500 pointer-events-none" />
                 <input
                   id="email"
                   type="email"
@@ -199,24 +164,20 @@ export default function RegisterPage() {
                   autoComplete="email"
                   value={form.email}
                   onChange={handleInputChange}
-                  className="w-full pl-11 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors"
+                  className="sc-input pl-10"
                   placeholder="you@example.com"
                   required
                 />
               </div>
             </div>
 
+            {/* Password */}
             <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1"
-              >
+              <label htmlFor="password" className="block text-charcoal-300 text-xs font-semibold mb-1.5">
                 Password
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Lock className="w-5 h-5 text-slate-400" />
-                </div>
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal-500 pointer-events-none" />
                 <input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
@@ -224,36 +185,28 @@ export default function RegisterPage() {
                   autoComplete="new-password"
                   value={form.password}
                   onChange={handleInputChange}
-                  className="w-full pl-11 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors"
-                  placeholder="••••••••"
+                  className="sc-input pl-10 pr-10"
+                  placeholder="Min. 6 characters"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-charcoal-500 hover:text-charcoal-300 transition-colors"
                   aria-label="Toggle password visibility"
                 >
-                  {showPassword ? (
-                    <EyeOff className="w-5 h-5 text-slate-400" />
-                  ) : (
-                    <Eye className="w-5 h-5 text-slate-400" />
-                  )}
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
+            {/* Confirm Password */}
             <div>
-              <label
-                htmlFor="confirmPassword"
-                className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1"
-              >
+              <label htmlFor="confirmPassword" className="block text-charcoal-300 text-xs font-semibold mb-1.5">
                 Confirm Password
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                  <Lock className="w-5 h-5 text-slate-400" />
-                </div>
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal-500 pointer-events-none" />
                 <input
                   id="confirmPassword"
                   type={showPassword ? 'text' : 'password'}
@@ -261,39 +214,33 @@ export default function RegisterPage() {
                   autoComplete="new-password"
                   value={form.confirmPassword}
                   onChange={handleInputChange}
-                  className="w-full pl-11 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors"
-                  placeholder="••••••••"
+                  className="sc-input pl-10 pr-10"
+                  placeholder="Repeat password"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-charcoal-500 hover:text-charcoal-300 transition-colors"
                   aria-label="Toggle password visibility"
                 >
-                  {showPassword ? (
-                    <EyeOff className="w-5 h-5 text-slate-400" />
-                  ) : (
-                    <Eye className="w-5 h-5 text-slate-400" />
-                  )}
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
+            {/* Community */}
             <div>
-              <label
-                htmlFor="communityId"
-                className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1"
-              >
-                Community
+              <label htmlFor="communityId" className="block text-charcoal-300 text-xs font-semibold mb-1.5">
+                Your Community
               </label>
               {loadingCommunities ? (
-                <div className="flex items-center gap-2 py-2.5 px-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-500">
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
-                  <span>Loading communities...</span>
+                <div className="sc-input flex items-center gap-2 text-charcoal-500 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin text-forest-500" />
+                  Loading communities...
                 </div>
               ) : communitiesError ? (
-                <div className="text-xs text-rose-500 p-3.5 border border-rose-250 dark:border-rose-500/30 rounded-xl bg-rose-50 dark:bg-rose-500/10">
+                <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-3 text-xs text-rose-300">
                   {communitiesError}
                 </div>
               ) : (
@@ -302,10 +249,10 @@ export default function RegisterPage() {
                   name="communityId"
                   value={form.communityId}
                   onChange={handleInputChange}
-                  className="w-full pl-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors"
+                  className="sc-input"
                   required
                 >
-                  <option value="">-- Select Your Community --</option>
+                  <option value="">— Select Your Community —</option>
                   {communities.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -315,47 +262,37 @@ export default function RegisterPage() {
               )}
             </div>
 
+            {/* Error */}
             {error && (
-              <div className="rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 p-3.5 flex items-start gap-2.5">
-                <AlertCircle className="w-5 h-5 text-rose-500 flex-shrink-0 mt-0.5" />
-                <span className="text-sm text-rose-700 dark:text-rose-300">
-                  {error}
-                </span>
+              <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-3.5 flex items-start gap-2.5 sc-anim-fade-up">
+                <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                <span className="text-xs text-rose-300">{error}</span>
               </div>
             )}
 
             <button
               type="submit"
+              id="register-submit-btn"
               disabled={isLoading || loadingCommunities}
-              className="w-full flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:scale-[1.01] transition-all active:scale-[0.99] disabled:opacity-60 disabled:cursor-wait"
+              className="sc-btn-primary w-full mt-2"
+              style={{ padding: '0.75rem 1.25rem', fontSize: '0.875rem' }}
             >
               {isLoading ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Creating account...
-                </>
+                <><Loader2 className="w-4 h-4 animate-spin" /> Creating account...</>
               ) : (
-                <>
-                  <UserPlus className="w-5 h-5" />
-                  Register
-                </>
+                <><UserPlus className="w-4 h-4" /> Create Account</>
               )}
             </button>
           </form>
-
-          {/* Footer */}
-          <div className="mt-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            <p>
-              Already have an account?{' '}
-              <Link
-                href="/auth/login"
-                className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
-              >
-                Sign In
-              </Link>
-            </p>
-          </div>
         </div>
+
+        {/* Footer link */}
+        <p className="text-center text-charcoal-500 text-sm mt-6">
+          Already have an account?{' '}
+          <Link href="/auth/login" className="text-forest-400 font-semibold hover:text-forest-300 underline-offset-2 hover:underline transition-colors">
+            Sign In
+          </Link>
+        </p>
       </div>
     </div>
   );

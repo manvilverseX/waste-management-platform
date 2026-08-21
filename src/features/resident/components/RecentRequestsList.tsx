@@ -1,7 +1,10 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-hooks/set-state-in-effect */
 import React, { useState, useEffect } from 'react';
 import { CollectionStatus, CollectionRequestDTO } from '@/types';
+import confetti from 'canvas-confetti';
 import {
   CheckCircle2,
   Clock,
@@ -92,6 +95,18 @@ export const RecentRequestsList: React.FC = () => {
     };
   }, [selectedRequestId]);
 
+  useEffect(() => {
+    if (!selectedRequestId) return;
+    const req = requests.find(r => r.id === selectedRequestId);
+    if (req && req.status === 'VERIFIED') {
+      confetti({
+        particleCount: 140,
+        spread: 85,
+        origin: { y: 0.6 }
+      });
+    }
+  }, [selectedRequestId, requests]);
+
   const formatVerificationAnalysis = (analysisText: string): string => {
     if (!analysisText) return 'No detailed explanation was provided.';
 
@@ -147,7 +162,6 @@ export const RecentRequestsList: React.FC = () => {
       }
     };
 
-    // Listen for auth state change
     const { data: { subscription } } = supabaseBrowserClient.auth.onAuthStateChange((event, session) => {
       if (!active) return;
 
@@ -155,14 +169,11 @@ export const RecentRequestsList: React.FC = () => {
         if (fallbackTimeout) clearTimeout(fallbackTimeout);
         fetchRequests(session);
       } else {
-        // If there's no session, check if we should wait for dev auto-login
         const isDevLoginEnabled = process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN_IN_PROD === 'true';
         if (!isDevLoginEnabled) {
           setError('You must be logged in to view your history.');
           setLoading(false);
         } else {
-          // If dev-login is enabled, we wait for the auth state change to occur.
-          // Set a fallback timeout in case the dev-login endpoint fails or is misconfigured.
           if (!fallbackTimeout) {
             fallbackTimeout = setTimeout(async () => {
               if (active) {
@@ -189,38 +200,38 @@ export const RecentRequestsList: React.FC = () => {
     switch (status) {
       case 'VERIFIED':
         return {
-          color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-          icon: <CheckCircle2 className="w-3.5 h-3.5" />,
+          pillClass: 'sc-pill sc-pill-verified',
+          icon: <CheckCircle2 className="w-3 h-3" />,
           label: 'Verified'
         };
       case 'COLLECTED':
         return {
-          color: 'text-blue-600 dark:text-blue-400 bg-blue-500/10 border-blue-500/20',
-          icon: <Package className="w-3.5 h-3.5" />,
-          label: 'Under Verification'
+          pillClass: 'sc-pill sc-pill-collected',
+          icon: <Package className="w-3 h-3" />,
+          label: 'Verification Scan'
         };
       case 'ASSIGNED':
         return {
-          color: 'text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/20',
-          icon: <Truck className="w-3.5 h-3.5" />,
-          label: 'Collector Assigned'
+          pillClass: 'sc-pill sc-pill-assigned',
+          icon: <Truck className="w-3 h-3" />,
+          label: 'Assigned'
         };
       case 'PENDING':
         return {
-          color: 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20',
-          icon: <Clock className="w-3.5 h-3.5 animate-pulse" />,
+          pillClass: 'sc-pill sc-pill-pending',
+          icon: <Clock className="w-3 h-3 animate-pulse" />,
           label: 'Pending'
         };
       case 'REJECTED':
         return {
-          color: 'text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/20',
-          icon: <XCircle className="w-3.5 h-3.5" />,
+          pillClass: 'sc-pill sc-pill-rejected',
+          icon: <XCircle className="w-3 h-3" />,
           label: 'Rejected'
         };
       default:
         return {
-          color: 'text-slate-600 dark:text-slate-400 bg-slate-500/10 border-slate-500/20',
-          icon: <AlertTriangle className="w-3.5 h-3.5" />,
+          pillClass: 'sc-pill sc-pill-pending',
+          icon: <AlertTriangle className="w-3 h-3" />,
           label: 'Cancelled'
         };
     }
@@ -228,17 +239,17 @@ export const RecentRequestsList: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-slate-500 dark:text-slate-450 gap-2">
-        <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
-        <span className="text-xs font-medium">Loading collection history...</span>
+      <div className="flex flex-col items-center justify-center py-12 text-charcoal-400 gap-2">
+        <Loader2 className="w-6 h-6 animate-spin text-forest-500" />
+        <span className="text-3xs uppercase tracking-widest font-bold">Loading collection history...</span>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-start gap-2.5 p-4 bg-rose-500/5 border border-rose-500/10 rounded-2xl text-xs text-rose-600 dark:text-rose-400">
-        <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 animate-bounce" />
+      <div className="flex items-start gap-2.5 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-xs text-rose-300">
+        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
         <div>
           <span className="font-bold block">Failed to load history</span>
           <p className="text-2xs mt-0.5 leading-relaxed">{error}</p>
@@ -249,98 +260,105 @@ export const RecentRequestsList: React.FC = () => {
 
   if (requests.length === 0) {
     return (
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-3xl p-8 text-center text-slate-500 dark:text-slate-450">
-        <Package className="w-8 h-8 text-slate-350 dark:text-slate-600 mx-auto mb-3" />
-        <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No collection requests found</p>
-        <p className="text-2xs text-slate-450 dark:text-slate-550 mt-1">Submit your first waste collection request using the button above.</p>
+      <div className="sc-empty rounded-3xl p-8 text-center text-charcoal-500">
+        <Package className="w-8 h-8 text-charcoal-700 mx-auto mb-3" />
+        <p className="text-xs font-bold text-white">No collection requests found</p>
+        <p className="text-2xs text-charcoal-400 mt-1">Submit your first waste collection request using the button above.</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {requests.map((request) => {
-        const { color, icon, label } = getStatusDetails(request.status);
+        const { pillClass, icon, label } = getStatusDetails(request.status);
         const isExpanded = selectedRequestId === request.id;
 
         return (
           <div
             key={request.id}
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800/80 rounded-2xl overflow-hidden shadow-xs hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+            className="sc-card overflow-hidden transition-all duration-200"
           >
             {/* List Row Header */}
             <div
               onClick={() => setSelectedRequestId(isExpanded ? null : request.id)}
-              className="p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer select-none"
+              className="p-4 flex items-center justify-between gap-4 cursor-pointer select-none"
             >
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl">
-                  <Layers className="w-5 h-5" />
+                <div className="p-2.5 bg-white/5 text-charcoal-300 rounded-xl border border-white/[0.04]">
+                  <Layers className="w-4.5 h-4.5" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-slate-400">ID: {request.id}</span>
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-2xs font-bold border ${color}`}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-3xs font-bold text-charcoal-500">ID: {request.id}</span>
+                    <span className={pillClass}>
                       {icon}
                       {label}
                     </span>
                   </div>
-                  <span className="text-2xs text-slate-500 dark:text-slate-400 block mt-1 flex items-center gap-1">
-                    <Calendar className="w-3 h-3 text-slate-400" />
-                    Requested on: {isMounted ? new Date(request.requestedAt).toLocaleString() : ''}
+                  <span className="text-3xs text-charcoal-400 block mt-1 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-charcoal-500" />
+                    Requested: {isMounted ? new Date(request.requestedAt).toLocaleString() : ''}
                   </span>
                 </div>
               </div>
-              <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+              <ChevronRight className={`w-4 h-4 text-charcoal-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
             </div>
 
             {/* Expandable details panel */}
             {isExpanded && (
-              <div className="px-5 pb-5 pt-1 border-t border-slate-50 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-900/10 space-y-4 text-xs">
+              <div className="px-5 pb-5 pt-2 border-t border-white/[0.04] bg-black/10 space-y-4 text-xs sc-anim-fade-up">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <span className="text-slate-400 block mb-0.5">Location</span>
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">{request.communityName}</span>
+                    <span className="text-charcoal-500 block text-3xs uppercase tracking-wider font-bold">Location</span>
+                    <span className="font-bold text-charcoal-200">{request.communityName}</span>
                   </div>
                   <div>
-                    <span className="text-slate-400 block mb-0.5">Completed Time</span>
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    <span className="text-charcoal-500 block text-3xs uppercase tracking-wider font-bold">Completed Time</span>
+                    <span className="font-bold text-charcoal-200">
                       {request.completedAt ? (isMounted ? new Date(request.completedAt).toLocaleString() : '') : 'N/A'}
                     </span>
                   </div>
                 </div>
 
                 {request.status === 'VERIFIED' && (
-                  <div className="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-xl flex items-start gap-2.5">
-                    <Sparkles className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5 animate-pulse" />
-                    <div>
-                      <span className="font-bold text-emerald-700 dark:text-emerald-450 block">AI Verified Clean!</span>
-                      <p className="text-slate-500 dark:text-slate-400 text-2xs mt-0.5 leading-relaxed">
-                        The AI agent compared the BEFORE and AFTER images and verified successful garbage collection. Reward points have been credited to your profile.
+                  <div className="p-4 bg-gradient-to-br from-forest-900/40 to-emerald-950/20 border-2 border-forest-500/40 rounded-3xl flex flex-col sm:flex-row items-center gap-4 sc-anim-scale-in text-center sm:text-left relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-forest-500/10 rounded-full blur-xl pointer-events-none" />
+                    <div className="h-14 w-14 rounded-full bg-forest-600/20 border border-forest-500/30 flex items-center justify-center text-3xl shrink-0 animate-bounce">
+                      ✨
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <span className="font-black text-sm text-forest-400 block tracking-tight">Eco-Task Verified! Awesome Job!</span>
+                      <p className="text-charcoal-300 text-3xs leading-relaxed max-w-lg">
+                        Our AI agent scanned the evidence photos and successfully confirmed the waste was cleaned. You are helping make our city greener!
                       </p>
+                    </div>
+                    <div className="bg-forest-900/30 border border-forest-500/30 py-2.5 px-4 rounded-2xl flex flex-col items-center justify-center shrink-0">
+                      <span className="text-[10px] text-forest-400 uppercase tracking-widest font-black">Rewarded</span>
+                      <span className="text-sm font-black text-white mt-0.5 animate-pulse">+100.00 pts</span>
                     </div>
                   </div>
                 )}
 
                 {request.status === 'COLLECTED' && (
                   <div className="space-y-2">
-                    <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl flex items-start gap-2.5">
-                      <Clock className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                    <div className="p-3 bg-[#0EA5E9]/10 border border-[#0EA5E9]/20 rounded-2xl flex items-start gap-2.5">
+                      <Clock className="w-4 h-4 text-[#0EA5E9] shrink-0 mt-0.5" />
                       <div>
-                        <span className="font-bold text-blue-700 dark:text-blue-450 block">Under Verification</span>
-                        <p className="text-slate-550 dark:text-slate-400 text-2xs mt-0.5 leading-relaxed">
-                          Your garbage has been collected. We're verifying the submitted evidence. Points will be credited after approval.
+                        <span className="font-extrabold text-[#7DD3FC] block">Under Verification Scan</span>
+                        <p className="text-charcoal-400 text-3xs mt-0.5 leading-relaxed">
+                          Garbage cleanup has been logged. Automated verification checks are running. points will update upon verification success.
                         </p>
                       </div>
                     </div>
 
                     {!loadingVerification && expandedVerification && expandedVerification.decision === 'needs_review' && (
-                      <div className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-1">
-                        <span className="font-bold text-amber-700 dark:text-amber-450 block flex items-center gap-1">
-                          <Info className="w-3.5 h-3.5 text-amber-500" />
+                      <div className="p-3 bg-marigold-500/10 border border-marigold-500/20 rounded-2xl space-y-1">
+                        <span className="font-bold text-marigold-400 block flex items-center gap-1.5">
+                          <Info className="w-3.5 h-3.5 text-marigold-400" />
                           Verification Progress Details
                         </span>
-                        <p className="text-slate-550 dark:text-slate-450 text-2xs leading-relaxed font-semibold">
+                        <p className="text-charcoal-400 text-3xs leading-relaxed font-semibold">
                           {formatVerificationAnalysis(expandedVerification.analysis)}
                         </p>
                       </div>
@@ -349,11 +367,11 @@ export const RecentRequestsList: React.FC = () => {
                 )}
 
                 {request.status === 'REJECTED' && (
-                  <div className="p-3 bg-rose-500/5 border border-rose-500/10 rounded-xl space-y-1">
-                    <span className="font-bold text-rose-700 dark:text-rose-450 block">Why was this rejected?</span>
-                    <p className="text-slate-550 dark:text-slate-450 text-2xs leading-relaxed font-semibold">
+                  <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-2xl space-y-1 sc-anim-fade-up">
+                    <span className="font-bold text-rose-450 block">Why was this rejected?</span>
+                    <p className="text-charcoal-400 text-3xs leading-relaxed font-semibold font-bold">
                       {loadingVerification ? (
-                        <span className="flex items-center gap-1.5 text-slate-400">
+                        <span className="flex items-center gap-1.5 text-charcoal-550">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           Retrieving verification details...
                         </span>
@@ -367,12 +385,12 @@ export const RecentRequestsList: React.FC = () => {
                 )}
 
                 {request.status === 'PENDING' && (
-                  <div className="p-3 bg-slate-100 dark:bg-slate-800/60 rounded-xl flex items-start gap-2.5">
-                    <Info className="w-4 h-4 text-slate-550 dark:text-slate-400 shrink-0 mt-0.5" />
+                  <div className="p-3 bg-white/5 border border-white/[0.04] rounded-2xl flex items-start gap-2.5">
+                    <Info className="w-4 h-4 text-charcoal-400 shrink-0 mt-0.5" />
                     <div>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 block">Awaiting Collector Assignment</span>
-                      <p className="text-slate-500 dark:text-slate-400 text-2xs mt-0.5 leading-relaxed">
-                        A waste collector agent will be assigned to your request shortly. You can track progress right here.
+                      <span className="font-bold text-charcoal-200 block">Awaiting Collector Assignment</span>
+                      <p className="text-charcoal-400 text-3xs mt-0.5 leading-relaxed">
+                        A collector will claim and pick up this collection ticket shortly. You can track status steps here.
                       </p>
                     </div>
                   </div>

@@ -495,7 +495,7 @@ export const EducationCenter: React.FC<{ onPointsAwarded: (points: number) => vo
   // ── JSX ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="bg-slate-900 text-white rounded-3xl p-6 relative overflow-hidden shadow-lg border border-slate-800">
+    <div className="sc-glass-forest sc-shadow-stack text-white rounded-3xl p-6 relative overflow-hidden">
       <div className="absolute top-0 right-0 h-32 w-32 bg-emerald-500/20 rounded-full blur-2xl -mr-8 -mt-8 pointer-events-none" />
 
       {/* Header */}

@@ -1,36 +1,63 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-hooks/set-state-in-effect */
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { 
+import {
   Gift,
-  Trophy, 
-  User, 
-  MapPin, 
-  Clock, 
-  PlusCircle, 
+  Trophy,
+  User,
+  MapPin,
+  Clock,
+  PlusCircle,
   Award,
   TrendingUp,
-  Leaf,
-  Loader2,
-  AlertCircle
+  Recycle,
+  AlertCircle,
+  Bell,
+  BarChart2,
+  Megaphone,
+  LogOut,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
+import { supabaseBrowserClient } from '@/lib/supabase/client';
+import { BackgroundMesh } from '@/features/shared/components/BackgroundMesh';
 import { RequestCollectionForm } from './RequestCollectionForm';
 import { RecentRequestsList } from './RecentRequestsList';
 import { ReportDumpingForm } from './ReportDumpingForm';
 import { LaunchCampaignTab } from './LaunchCampaignTab';
 import { NotificationsTab } from './NotificationsTab';
 import { EducationCenter } from './EducationCenter';
-import { supabaseBrowserClient } from '@/lib/supabase/client';
-import { RewardTransactionDTO, RewardSummaryDTO, CommunityProfileDTO, CommunityScorecardDTO } from '@/types';
+import {
+  RewardTransactionDTO,
+  RewardSummaryDTO,
+  CommunityProfileDTO,
+  CommunityScorecardDTO
+} from '@/types';
+
+// Tab Configuration DTO
+const NAV_ITEMS = [
+  { id: 'overview', label: 'Overview', icon: Clock, activeClass: 'sc-tab-active-indigo' },
+  { id: 'campaigns', label: 'Campaigns', icon: Megaphone, activeClass: 'sc-tab-active-indigo' },
+  { id: 'notifications', label: 'Inbox', icon: Bell, activeClass: 'sc-tab-active-indigo' }
+] as const;
+
+type TabId = typeof NAV_ITEMS[number]['id'];
 
 export const ResidentDashboard: React.FC = () => {
   const router = useRouter();
+
+  // ── States ──────────────────────────────────────────────────────────────
+  const [profile, setProfile] = useState<{ name: string; email: string } | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [activeTab, setActiveTab] = useState<TabId>('overview');
+
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [showDumpingForm, setShowDumpingForm] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'rewards' | 'community' | 'campaigns' | 'notifications'>('overview');
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
-  const [profile, setProfile] = useState<{ name: string; email: string } | null>(null);
+
   const [transactions, setTransactions] = useState<RewardTransactionDTO[]>([]);
   const [summary, setSummary] = useState<RewardSummaryDTO | null>(null);
   const [community, setCommunity] = useState<CommunityProfileDTO | null>(null);
@@ -39,7 +66,38 @@ export const ResidentDashboard: React.FC = () => {
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingCommunity, setLoadingCommunity] = useState(true);
   const [loadingScorecard, setLoadingScorecard] = useState(true);
+  const [streakCount, setStreakCount] = useState(0);
 
+  useEffect(() => {
+    try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const lastActive = localStorage.getItem('sc_last_active_date');
+      const currentStreakVal = localStorage.getItem('sc_streak_count') || '0';
+      let streak = parseInt(currentStreakVal, 10);
+
+      if (!lastActive) {
+        streak = 1;
+      } else {
+        const lastDate = new Date(lastActive);
+        const todayDate = new Date(todayStr);
+        const diffTime = Math.abs(todayDate.getTime() - lastDate.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays === 1) {
+          streak += 1;
+        } else if (diffDays > 1) {
+          streak = 1; // Reset
+        }
+      }
+      localStorage.setItem('sc_last_active_date', todayStr);
+      localStorage.setItem('sc_streak_count', streak.toString());
+      setStreakCount(streak);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  // ── Handlers ────────────────────────────────────────────────────────────
   const handleLogout = async () => {
     try {
       await supabaseBrowserClient.auth.signOut();
@@ -72,508 +130,362 @@ export const ResidentDashboard: React.FC = () => {
     const initAuthAndFetch = async () => {
       let currentSession = null;
       try {
-        const { data: { session: existingSession } } = await supabaseBrowserClient.auth.getSession();
-        currentSession = existingSession;
-
-        if (!currentSession && (process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_ALLOW_DEV_LOGIN_IN_PROD === 'true')) {
-          console.log('Attempting developer auto-sign-in...');
-          const res = await fetch('/api/dev-login', { method: 'POST' });
-          if (res.ok) {
-            const { accessToken, refreshToken } = await res.json();
-            const { data: { session: newSession } } = await supabaseBrowserClient.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken
-            });
-            currentSession = newSession;
-            console.log('Developer auto-sign-in successful.');
-          } else {
-            console.error('Developer auto-sign-in endpoint returned error status:', res.status);
-          }
+        const { data: { session } } = await supabaseBrowserClient.auth.getSession();
+        currentSession = session;
+        if (!session) {
+          router.push('/auth/login');
+          return;
         }
-      } catch (e) {
-        console.error('Auth check / dev login failed:', e);
+
+        const { data: userData, error: userError } = await supabaseBrowserClient
+          .from('users')
+          .select('name, email, role')
+          .eq('id', session.user.id)
+          .single();
+
+        if (userError || !userData) {
+          throw new Error('User record not found in system.');
+        }
+
+        if (userData.role !== 'resident') {
+          console.warn('Unauthorized resident access redirection from:', userData.role);
+          if (userData.role === 'collector') {
+            router.push('/collector');
+          } else {
+            router.push('/municipality');
+          }
+          return;
+        }
+
+        setProfile({ name: userData.name, email: userData.email });
+        setLoadingProfile(false);
+
+        fetchRewardsSummary(session);
+        fetchCommunityProfile(session);
+        fetchCommunityScorecard(session);
+        fetchTransactions(session);
+
+      } catch (err) {
+        console.error('[ResidentDashboard Init Error]:', err);
+        router.push('/auth/login');
       }
+    };
 
-      if (currentSession) {
-        setProfile({
-          name: currentSession.user.user_metadata?.name || currentSession.user.email?.split('@')[0] || 'Resident',
-          email: currentSession.user.email || ''
+    const fetchRewardsSummary = async (session: any) => {
+      try {
+        const res = await fetch('/api/rewards/summary', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
         });
-
-        // Fetch transactions in background
-        const fetchTxPromise = fetch('/api/rewards', {
-          headers: {
-            'Authorization': `Bearer ${currentSession.access_token}`
-          }
-        }).then(async (res) => {
-          if (res.ok) {
-            const result = await res.json();
-            setTransactions(result.data || []);
-          } else {
-            console.error('Failed to fetch rewards:', res.status);
-          }
-        }).catch((err) => {
-          console.error('Error fetching rewards:', err);
-        }).finally(() => {
-          setLoadingTransactions(false);
-        });
-
-        // Fetch summary in background
-        const fetchSummaryPromise = fetch('/api/rewards/summary', {
-          headers: {
-            'Authorization': `Bearer ${currentSession.access_token}`
-          }
-        }).then(async (res) => {
-          if (res.ok) {
-            const result = await res.json();
-            setSummary(result.data || null);
-          } else {
-            console.error('Failed to fetch rewards summary:', res.status);
-          }
-        }).catch((err) => {
-          console.error('Error fetching rewards summary:', err);
-        }).finally(() => {
-          setLoadingSummary(false);
-        });
-
-        // Fetch community profile in background
-        const fetchCommunityPromise = fetch('/api/communities/profile', {
-          headers: {
-            'Authorization': `Bearer ${currentSession.access_token}`
-          }
-        }).then(async (res) => {
-          if (res.ok) {
-            const result = await res.json();
-            setCommunity(result.data || null);
-          } else {
-            console.error('Failed to fetch community profile:', res.status);
-          }
-        }).catch((err) => {
-          console.error('Error fetching community profile:', err);
-        }).finally(() => {
-          setLoadingCommunity(false);
-        });
-
-        // Fetch community scorecard in background
-        const fetchScorecardPromise = fetch('/api/communities/scorecard', {
-          headers: {
-            'Authorization': `Bearer ${currentSession.access_token}`
-          }
-        }).then(async (res) => {
-          if (res.ok) {
-            const result = await res.json();
-            setScorecard(result.data || null);
-          } else {
-            console.error('Failed to fetch community scorecard:', res.status);
-          }
-        }).catch((err) => {
-          console.error('Error fetching community scorecard:', err);
-        }).finally(() => {
-          setLoadingScorecard(false);
-        });
-
-        await Promise.all([
-          fetchTxPromise,
-          fetchSummaryPromise,
-          fetchCommunityPromise,
-          fetchScorecardPromise
-        ]);
-      } else {
-        setLoadingTransactions(false);
+        const result = await res.json();
+        if (res.ok && result.success) {
+          setSummary(result.data);
+        }
+      } catch (err) {
+        console.error('Failed to load summary details:', err);
+      } finally {
         setLoadingSummary(false);
+      }
+    };
+
+    const fetchCommunityProfile = async (session: any) => {
+      try {
+        const res = await fetch('/api/communities/profile', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        });
+        const result = await res.json();
+        if (res.ok && result.success) {
+          setCommunity(result.data);
+        }
+      } catch (err) {
+        console.error('Failed to load community profile:', err);
+      } finally {
         setLoadingCommunity(false);
+      }
+    };
+
+    const fetchCommunityScorecard = async (session: any) => {
+      try {
+        const res = await fetch('/api/communities/scorecard', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        });
+        const result = await res.json();
+        if (res.ok && result.success) {
+          setScorecard(result.data);
+        }
+      } catch (err) {
+        console.error('Failed to load community scorecard:', err);
+      } finally {
         setLoadingScorecard(false);
       }
     };
 
+    const fetchTransactions = async (session: any) => {
+      try {
+        const res = await fetch('/api/rewards', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        });
+        const result = await res.json();
+        if (res.ok && result.success) {
+          setTransactions(result.data || []);
+        }
+      } catch (err) {
+        console.error('Failed to load transactions:', err);
+      } finally {
+        setLoadingTransactions(false);
+      }
+    };
+
     initAuthAndFetch();
-  }, []);
+  }, [router]);
+
+  if (loadingProfile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#14171A] text-white">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 text-forest-500 animate-spin" />
+          <p className="text-xs text-charcoal-400 font-bold uppercase tracking-wider">Synchronizing Profile...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50/50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased selection:bg-emerald-500/20">
+    <div className="min-h-screen bg-[#14171A] text-[#F0F2F5] pb-16 relative overflow-hidden" style={{ fontFamily: 'var(--font-geist-sans)' }}>
       {/* Header */}
-      <header className="sticky top-0 z-40 w-full border-b border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md">
+      <header className="sticky top-0 z-30 bg-[#14171A]/90 backdrop-blur-md border-b border-white/[0.07]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-md shadow-emerald-500/20 ring-1 ring-emerald-500/10">
-              <Leaf className="w-5 h-5 text-white" />
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-forest-700 flex items-center justify-center shadow-lg"
+              style={{ boxShadow: '0 4px 14px rgba(22,163,74,0.3)' }}>
+              <Recycle className="w-5.5 h-5.5 text-white" />
             </div>
             <div>
-              <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-slate-900 to-slate-850 dark:from-white dark:to-slate-200 bg-clip-text text-transparent">
-                EcoClean
+              <span className="font-display text-lg font-bold text-white">
+                EcoClean App
               </span>
-              <span className="ml-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded bg-emerald-500/5 uppercase tracking-wider">
+              <span className="sc-pill sc-pill-verified ml-2" style={{ fontSize: '0.5rem' }}>
                 Resident
               </span>
             </div>
           </div>
+
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 border border-slate-200 dark:border-slate-800 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-900 shadow-xs">
-              <User className="w-4 h-4 text-emerald-500" />
-              <span className="text-xs font-semibold">{profile?.name || 'Resident'}</span>
+            {/* User chip */}
+            <div className="hidden sm:flex items-center gap-2 bg-white/5 border border-white/[0.06] px-3 py-1.5 rounded-xl">
+              <div className="w-5 h-5 rounded-lg bg-forest-700/40 flex items-center justify-center">
+                <User className="w-3 h-3 text-forest-400" />
+              </div>
+              <span className="text-xs font-semibold text-charcoal-200">
+                {profile?.name || 'Resident'}
+              </span>
             </div>
-            <button
-              onClick={handleLogout}
-              className="text-xs font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-500 dark:hover:text-rose-350 border border-rose-500/20 px-3 py-1.5 rounded-xl bg-rose-500/5 hover:bg-rose-500/10 transition-all active:scale-[0.98]"
-            >
-              Log Out
+
+            <button onClick={handleLogout} className="sc-btn-rose" style={{ padding: '0.4rem 0.75rem', fontSize: '0.7rem' }}>
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Log Out</span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Body */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        
-        {/* Top welcome grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Welcome / Profile Card */}
-          <div className="lg:col-span-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 relative overflow-hidden shadow-xs hover:shadow-md transition-shadow">
-            <div className="absolute top-0 right-0 h-40 w-40 bg-emerald-500/5 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
-            
-            <div className="flex items-start justify-between flex-wrap gap-4 relative z-10">
+      {/* Background blobs */}
+      <div className="relative z-10">
+        <BackgroundMesh role="resident" />
+      </div>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
+        <div className="grid grid-cols-12 gap-6">
+
+          {/* 1. LARGE BENTO TILE: Active Requests Tracker / History List (col-span-12 lg:col-span-8) */}
+          <div className="col-span-12 lg:col-span-8 sc-glass sc-shadow-stack p-6 rounded-3xl flex flex-col space-y-4">
+            {/* Header & Tabs inside bento */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-white/[0.05]">
               <div>
-                <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Welcome back</span>
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-1 bg-gradient-to-r from-slate-900 to-slate-800 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
-                  {profile?.name || 'Resident'}
-                </h1>
-                <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-                  Community Resident at <strong className="font-semibold text-slate-700 dark:text-slate-300">{loadingCommunity ? '...' : (community?.name || 'My Community')}</strong>
-                </p>
+                <h2 className="font-display text-base font-extrabold text-white flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-forest-500" />
+                  Collection Requests Registry
+                </h2>
+                <p className="text-3xs text-charcoal-400 mt-0.5">Track status updates and history of garbage collection tickets</p>
               </div>
-              <div className="flex items-center gap-3">
+              
+              {/* Tab segment */}
+              <div className="flex gap-1.5 bg-white/5 p-1 rounded-xl border border-white/[0.04] self-end sm:self-auto">
                 <button
-                  onClick={() => setShowDumpingForm(true)}
-                  className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 font-semibold text-sm rounded-2xl flex items-center gap-2 border border-rose-500/20 transition-all active:scale-[0.99]"
+                  onClick={() => setActiveTab('overview')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all ${activeTab === 'overview' ? 'bg-forest-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
                 >
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  Report Dumping
+                  History
                 </button>
                 <button
-                  onClick={() => setShowRequestForm(true)}
-                  className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-sm rounded-2xl shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:scale-[1.01] flex items-center gap-2 transition-all active:scale-[0.99]"
+                  onClick={() => setActiveTab('campaigns')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all ${activeTab === 'campaigns' ? 'bg-forest-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
                 >
-                  <PlusCircle className="w-4 h-4" />
-                  Request Collection
+                  Campaigns
+                </button>
+                <button
+                  onClick={() => setActiveTab('notifications')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all relative ${activeTab === 'notifications' ? 'bg-forest-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
+                >
+                  Inbox
+                  {unreadNotificationsCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                  )}
                 </button>
               </div>
             </div>
 
-            {/* Quick stats ribbon */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-8 pt-6 border-t border-slate-100 dark:border-slate-800/80">
-              <div>
-                <span className="text-xs text-slate-400 dark:text-slate-500 block">Community</span>
-                <span className="text-sm font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 mt-0.5">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-500" />
-                  {loadingCommunity ? '...' : (community?.name || 'Sector 4')}
+            {/* Tab content inside the main tile */}
+            <div className="flex-1 overflow-y-auto max-h-[380px] pr-1 space-y-3">
+              {activeTab === 'overview' && <RecentRequestsList />}
+              {activeTab === 'campaigns' && (
+                <div className="sc-anim-fade-up">
+                  <LaunchCampaignTab
+                    communityName={community?.name || null}
+                    loadingCommunity={loadingCommunity}
+                  />
+                </div>
+              )}
+              {activeTab === 'notifications' && (
+                <div className="sc-anim-fade-up">
+                  <NotificationsTab
+                    onUnreadCountChange={(count) => setUnreadNotificationsCount(count)}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 2. MEDIUM TILE: Streak & Points Balance (LOUD CELEBRATION TILE) (col-span-12 md:col-span-6 lg:col-span-4) */}
+          <div className="col-span-12 md:col-span-6 lg:col-span-4 sc-glass-forest sc-shadow-stack p-6 rounded-3xl flex flex-col justify-between overflow-hidden relative group">
+            {/* Animated neon flame halo */}
+            <div className="absolute -top-10 -right-10 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl group-hover:bg-amber-500/20 transition-all pointer-events-none" />
+            
+            <div className="space-y-4">
+              <div className="flex justify-between items-start">
+                <div>
+                  <span className="text-[10px] text-forest-400 font-black uppercase tracking-wider">Citizen Streak</span>
+                  <h3 className="text-xl font-black text-white mt-0.5">Keep it burning!</h3>
+                </div>
+                <div className="relative">
+                  <span className="absolute inset-0 rounded-full bg-amber-500/20 animate-ping" />
+                  <span className="h-10 w-10 rounded-full bg-amber-500/20 flex items-center justify-center text-xl relative border border-amber-500/30">
+                    🔥
+                  </span>
+                </div>
+              </div>
+
+              {/* Streak Count Panel */}
+              <div className="bg-black/20 border border-white/[0.04] p-4 rounded-2xl flex items-center justify-between">
+                <div>
+                  <span className="font-mono text-3xl font-black text-white">{streakCount}</span>
+                  <span className="text-2xs text-charcoal-400 block font-bold mt-0.5">Consecutive Active Days</span>
+                </div>
+                <span className="text-3xs uppercase px-2 py-1 rounded bg-amber-500/10 text-amber-400 font-extrabold border border-amber-500/20 animate-pulse">
+                  HOT STATE
                 </span>
               </div>
+            </div>
+
+            {/* Points balance stats */}
+            <div className="mt-5 pt-4 border-t border-white/[0.05] flex justify-between items-center">
               <div>
-                <span className="text-xs text-slate-400 dark:text-slate-500 block">Reward Balance</span>
-                <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-0.5">
-                  <Award className="w-4 h-4" />
-                  {loadingSummary ? '...' : (summary?.balancePoints ?? 0)} pts
+                <span className="text-charcoal-400 text-3xs font-extrabold uppercase tracking-widest block">Available Balance</span>
+                <span className="text-lg font-black text-forest-400 flex items-center gap-1.5 mt-0.5">
+                  <Award className="w-5 h-5 text-forest-400" />
+                  {loadingSummary ? (
+                    <span className="sc-skeleton h-5 w-16 block" />
+                  ) : (
+                    `${summary?.balancePoints ?? 0} pts`
+                  )}
                 </span>
               </div>
-              <div className="col-span-2 sm:col-span-1">
-                <span className="text-xs text-slate-400 dark:text-slate-500 block">Community Score</span>
-                <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 mt-0.5">
-                  <Trophy className="w-3.5 h-3.5" />
-                  {loadingScorecard ? '...' : scorecard ? `${scorecard.score}/100 Grade ${getGrade(scorecard.score)}` : 'No Score'}
+              <div className="text-right">
+                <span className="text-charcoal-500 text-[9px] uppercase tracking-wider block font-bold">Lifetime Rewards</span>
+                <span className="text-2xs font-extrabold text-charcoal-200 mt-1 block">
+                  {loadingSummary ? '...' : `${summary?.lifetimePoints ?? 0} pts`}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Education Center (Tips & Quiz) */}
-          <EducationCenter onPointsAwarded={handlePointsAwarded} />
-        </div>
+          {/* 3. MEDIUM TILE: Education Tip & Quiz (col-span-12 md:col-span-6 lg:col-span-4) */}
+          <div className="col-span-12 md:col-span-6 lg:col-span-4 flex flex-col">
+            <EducationCenter onPointsAwarded={handlePointsAwarded} />
+          </div>
 
-        {/* Tab Navigation */}
-        <div className="flex border-b border-slate-200 dark:border-slate-800 gap-6">
-          <button
-            onClick={() => setActiveTab('overview')}
-            className={`pb-4 text-sm font-bold border-b-2 transition-all relative ${
-              activeTab === 'overview' 
-                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' 
-                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-            }`}
-          >
-            My Collections
-          </button>
-          <button
-            onClick={() => setActiveTab('rewards')}
-            className={`pb-4 text-sm font-bold border-b-2 transition-all relative ${
-              activeTab === 'rewards' 
-                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' 
-                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-            }`}
-          >
-            Rewards & History
-          </button>
-          <button
-            onClick={() => setActiveTab('community')}
-            className={`pb-4 text-sm font-bold border-b-2 transition-all relative ${
-              activeTab === 'community' 
-                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' 
-                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-            }`}
-          >
-            Community Scorecard
-          </button>
-          <button
-            onClick={() => setActiveTab('campaigns')}
-            className={`pb-4 text-sm font-bold border-b-2 transition-all relative ${
-              activeTab === 'campaigns'
-                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
-                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-            }`}
-          >
-            Launch Campaign
-          </button>
-          <button
-            onClick={() => setActiveTab('notifications')}
-            className={`pb-4 text-sm font-bold border-b-2 transition-all relative flex items-center gap-1.5 ${
-              activeTab === 'notifications'
-                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
-                : 'border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-            }`}
-          >
-            <span>🔔 Notifications</span>
-            {unreadNotificationsCount > 0 && (
-              <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-extrabold text-white">
-                {unreadNotificationsCount}
-              </span>
-            )}
-          </button>
-        </div>
+          {/* 4. MEDIUM TILE: Quick Actions / Report Buttons (col-span-12 md:col-span-6 lg:col-span-4) */}
+          <div className="col-span-12 md:col-span-6 lg:col-span-4 sc-glass sc-shadow-stack p-6 rounded-3xl flex flex-col justify-between space-y-4">
+            <div>
+              <span className="text-[10px] text-forest-400 font-black uppercase tracking-wider">Quick Actions</span>
+              <h3 className="text-sm font-extrabold text-white mt-0.5">Report or request ticket</h3>
+              <p className="text-3xs text-charcoal-400 mt-1">Directly trigger AI-verified garbage cleaning services or report illegal dumpings inside the ward limits.</p>
+            </div>
+            
+            <div className="space-y-2.5">
+              <button
+                onClick={() => setShowDumpingForm(true)}
+                id="report-dumping-btn"
+                className="sc-btn-rose w-full py-3 flex items-center justify-center gap-2 text-xs font-black uppercase"
+              >
+                <AlertCircle className="w-4 h-4" />
+                Report Illegal Dumping
+              </button>
+              <button
+                onClick={() => setShowRequestForm(true)}
+                id="request-collection-btn"
+                className="sc-btn-primary w-full py-3 flex items-center justify-center gap-2 text-xs font-black uppercase"
+              >
+                <PlusCircle className="w-4 h-4" />
+                Request Collection
+              </button>
+            </div>
+          </div>
 
-        {/* Tab Contents */}
-        <div className="grid grid-cols-1 gap-8">
-          {activeTab === 'overview' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Recent Requests Section */}
-              <div className="lg:col-span-2 space-y-6">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-slate-400" />
-                    Collection History
-                  </h2>
-                </div>
-                <RecentRequestsList />
+          {/* 5. SMALL TILE: Community Profile & Scorecard (col-span-12 md:col-span-6 lg:col-span-4) */}
+          <div className="col-span-12 md:col-span-6 lg:col-span-4 sc-glass sc-shadow-stack p-6 rounded-3xl space-y-4">
+            <div>
+              <span className="text-[10px] text-indigo-400 font-black uppercase tracking-wider">Community Standings</span>
+              <h3 className="text-sm font-extrabold text-white mt-0.5">Locality scorecard</h3>
+            </div>
+
+            <div className="space-y-3 font-semibold text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-charcoal-400">Community Rank:</span>
+                <span className="text-indigo-400 font-bold flex items-center gap-1">
+                  <Trophy className="w-3.5 h-3.5" />
+                  {loadingScorecard ? '...' : scorecard ? `${scorecard.score}/100 · Grade ${getGrade(scorecard.score)}` : '—'}
+                </span>
               </div>
-
-              {/* Sidebar Community details */}
-              <div className="space-y-6">
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-xs">
-                  <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">My Community Profile</h3>
-                  <div className="space-y-4">
-                    <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800/80">
-                      <div className="flex items-center gap-2.5">
-                        <MapPin className="w-5 h-5 text-emerald-500 shrink-0" />
-                        <div>
-                          <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">{loadingCommunity ? '...' : (community?.name || 'My Community')}</h4>
-                          <p className="text-slate-500 dark:text-slate-400 text-xs mt-0.5">{loadingCommunity ? '...' : (community?.address || '')}</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1">
-                      <span>Total Active Members</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{loadingCommunity ? '...' : (community?.membersCount || 0)} residents</span>
-                    </div>
-                  </div>
-                </div>
+              <div className="flex justify-between items-center">
+                <span className="text-charcoal-400">My Sector:</span>
+                <span className="text-charcoal-200">
+                  {loadingCommunity ? '...' : (community?.name || 'Sector 4')}
+                </span>
               </div>
             </div>
-          )}
 
-          {activeTab === 'rewards' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {/* Rewards Balance Card */}
-              <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-500/20 rounded-3xl p-6 flex flex-col justify-between shadow-xs">
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="p-2.5 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-2xl">
-                      <Gift className="w-6 h-6" />
-                    </div>
-                    <span className="text-2xs font-bold text-emerald-700 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">Active Balance</span>
-                  </div>
-                  <span className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tight">
-                    {loadingSummary ? '...' : (summary?.balancePoints ?? 0)}
-                  </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400 block mt-1">Available reward points</span>
-                </div>
-                <div className="mt-8 pt-4 border-t border-emerald-500/10 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                  <span>Lifetime Points Earned:</span>
-                  <span className="font-bold text-slate-800 dark:text-slate-200">
-                    {loadingSummary ? '...' : (summary?.lifetimePoints ?? 0)}
-                  </span>
-                </div>
+            {/* Scorecard index bar */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex justify-between text-[10px] font-bold text-charcoal-400">
+                <span>Cleanliness Target Index</span>
+                <span>{loadingScorecard ? '...' : scorecard ? `${scorecard.score}%` : '0%'}</span>
               </div>
-
-              {/* Leaderboard status */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 flex flex-col justify-between shadow-xs">
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="p-2.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-2xl">
-                      <Trophy className="w-6 h-6" />
-                    </div>
-                    <span className="text-2xs font-bold text-indigo-700 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full">Community Rank</span>
-                  </div>
-                  <span className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tight">
-                    {loadingSummary ? '...' : (summary?.rank ? `#${summary.rank}` : 'N/A')}
-                  </span>
-                  <span className="text-xs text-slate-500 dark:text-slate-400 block mt-1">Out of {loadingCommunity ? '...' : (community?.membersCount || 0)} residents</span>
-                </div>
-                <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                  <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-                  <span>Up 3 ranks since last week</span>
-                </div>
-              </div>
-
-              {/* Reward transaction history list */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xs">
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Recent Transactions</h3>
-                <div className="space-y-3.5">
-                  {loadingTransactions ? (
-                    <div className="flex flex-col items-center justify-center py-6 text-slate-500 gap-2">
-                      <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
-                      <span className="text-2xs">Loading transactions...</span>
-                    </div>
-                  ) : transactions.length === 0 ? (
-                    <div className="text-center py-6 text-slate-450 dark:text-slate-500">
-                      <p className="text-xs font-semibold">No transactions found</p>
-                      <p className="text-2xs mt-0.5">Your points history will appear here.</p>
-                    </div>
-                  ) : (
-                    transactions.map((tx) => (
-                      <div key={tx.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-50 dark:border-slate-800/80 last:border-b-0">
-                        <div>
-                          <span className="font-bold text-slate-800 dark:text-slate-200 block">{tx.reason}</span>
-                          <span className="text-slate-400 block mt-0.5">
-                            {tx.createdAt ? new Date(tx.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''}
-                          </span>
-                        </div>
-                        <span className="font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
-                          +{tx.points}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
+              <div className="sc-progress h-2">
+                <div
+                  className="sc-progress-fill"
+                  style={{
+                    width: `${loadingScorecard ? 0 : scorecard ? Math.min(scorecard.score, 100) : 0}%`,
+                    background: 'linear-gradient(to right, #6366F1, #818CF8)'
+                  }}
+                />
               </div>
             </div>
-          )}
+          </div>
 
-          {activeTab === 'community' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Big Score Card */}
-              <div className="lg:col-span-2 bg-gradient-to-tr from-slate-900 to-slate-800 text-white rounded-3xl p-6 border border-slate-800 relative overflow-hidden shadow-md">
-                <div className="absolute top-0 right-0 h-40 w-40 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <span className="text-2xs font-bold text-slate-400 uppercase tracking-wider">Current Period Score</span>
-                    <h3 className="text-2xl font-extrabold mt-1">{loadingCommunity ? '...' : (community?.name || 'My Community')}</h3>
-                  </div>
-                  <div className="h-14 w-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
-                    <span className="text-2xl font-black text-emerald-400">
-                      {loadingScorecard ? '...' : scorecard ? getGrade(scorecard.score) : '—'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-6 py-6 border-t border-slate-800">
-                  <div>
-                    <span className="text-xs text-slate-500 block">Active Score</span>
-                    <span className="text-3xl font-extrabold text-emerald-400 mt-1">
-                      {loadingScorecard ? '...' : scorecard ? `${scorecard.score}/100` : '—'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-xs text-slate-500 block">Weekly Target</span>
-                    <span className="text-3xl font-extrabold text-slate-300 mt-1">90</span>
-                  </div>
-                  <div className="col-span-2 md:col-span-1">
-                    <span className="text-xs text-slate-500 block">Period</span>
-                    <span className="text-3xl font-extrabold text-indigo-400 mt-1">
-                      {loadingScorecard ? '...' : scorecard ? scorecard.period : '—'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Progress bar */}
-                <div className="mt-4 space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-slate-400">Target progress</span>
-                    <span className="text-emerald-400 font-bold">
-                      {loadingScorecard ? '...' : scorecard ? `${scorecard.score}% of target` : '0% of target'}
-                    </span>
-                  </div>
-                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full" 
-                      style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.score : 0}%` }}
-                    ></div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Score breakdown metrics */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xs">
-                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-5">Score Breakdown</h3>
-                <div className="space-y-5">
-                  <div>
-                    <div className="flex justify-between text-xs font-bold mb-1">
-                      <span>Waste Segregation Ratio</span>
-                      <span className="text-emerald-600 dark:text-emerald-400">
-                        {loadingScorecard ? '...' : scorecard ? `${scorecard.breakdown.segregation}%` : '—'}
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.breakdown.segregation : 0}%` }}></div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs font-bold mb-1">
-                      <span>Resident Participation</span>
-                      <span className="text-amber-600 dark:text-amber-400">
-                        {loadingScorecard ? '...' : scorecard ? `${scorecard.breakdown.participation}%` : '—'}
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-amber-500 rounded-full" style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.breakdown.participation : 0}%` }}></div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs font-bold mb-1">
-                      <span>Cleanliness Index</span>
-                      <span className="text-indigo-600 dark:text-indigo-400">
-                        {loadingScorecard ? '...' : scorecard ? `${scorecard.breakdown.cleanliness}%` : '—'}
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${loadingScorecard ? 0 : scorecard ? scorecard.breakdown.cleanliness : 0}%` }}></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          {activeTab === 'campaigns' && (
-            <LaunchCampaignTab
-              communityName={community?.name || null}
-              loadingCommunity={loadingCommunity}
-            />
-          )}
-          {activeTab === 'notifications' && (
-            <NotificationsTab
-              onUnreadCountChange={(count) => setUnreadNotificationsCount(count)}
-            />
-          )}
         </div>
       </main>
 
-      {/* Slide-over Request Modal Form */}
+      {/* ── Modals ────────────────────────────────────────────────── */}
       {showRequestForm && (
         <RequestCollectionForm onClose={() => setShowRequestForm(false)} />
       )}

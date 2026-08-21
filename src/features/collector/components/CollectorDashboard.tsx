@@ -1,278 +1,151 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-hooks/set-state-in-effect */
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import {
   X, Camera, RefreshCw, Check, AlertCircle, CheckCircle2, Loader2,
   Leaf, LogOut, MapPin, Inbox, History, Calendar, CheckSquare,
-  ChevronRight, Info, Sparkles, Clock, Award, Trophy, TrendingUp, Gift
+  ChevronRight, Award, Trophy, Clock, TrendingUp, Gift
 } from 'lucide-react';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
+import { BackgroundMesh } from '@/features/shared/components/BackgroundMesh';
 import { CollectionRequestDTO } from '@/types';
+
+// ── Status labels ────────────────────────────────────────────────────────
+function getStatusLabel(status: string) {
+  switch (status) {
+    case 'PENDING': return 'Pending';
+    case 'ASSIGNED': return 'Assigned';
+    case 'COLLECTED': return 'Under Scan';
+    case 'VERIFIED': return 'Verified';
+    case 'REJECTED': return 'Rejected';
+    default: return status;
+  }
+}
+
+function getStatusPillClass(status: string) {
+  switch (status) {
+    case 'PENDING': return 'sc-pill sc-pill-pending';
+    case 'ASSIGNED': return 'sc-pill sc-pill-assigned';
+    case 'COLLECTED': return 'sc-pill sc-pill-collected';
+    case 'VERIFIED': return 'sc-pill sc-pill-verified';
+    case 'REJECTED': return 'sc-pill sc-pill-rejected';
+    default: return 'sc-pill sc-pill-pending';
+  }
+}
 
 export const CollectorDashboard: React.FC = () => {
   const router = useRouter();
 
-  // User Profile States
-  const [profile, setProfile] = useState<{ name: string; email: string; communityName?: string } | null>(null);
+  // ── States ──────────────────────────────────────────────────────────────
+  const [profile, setProfile] = useState<{ name: string; email: string; communityName: string } | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
+  const [activeTab, setActiveTab] = useState<'available' | 'assignments' | 'history' | 'rewards'>('available');
 
-  // Collection Request States
   const [requests, setRequests] = useState<CollectionRequestDTO[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
   const [requestsError, setRequestsError] = useState<string | null>(null);
 
-  // Verification Details for expanded history entries
-  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
-  const [expandedVerification, setExpandedVerification] = useState<{
-    analysis: string;
-    decision: 'verified' | 'rejected' | 'needs_review';
-  } | null>(null);
-  const [loadingVerification, setLoadingVerification] = useState(false);
-
-  useEffect(() => {
-    if (!selectedRequestId) {
-      setExpandedVerification(null);
-      return;
-    }
-
-    let active = true;
-    const fetchVerification = async () => {
-      setLoadingVerification(true);
-      try {
-        const { data: evidence, error: fetchErr } = await supabaseBrowserClient
-          .from('evidence')
-          .select(`
-            id,
-            verification_results (
-              id,
-              decision,
-              analysis,
-              verified_at
-            )
-          `)
-          .eq('collection_request_id', selectedRequestId)
-          .eq('evidence_type', 'COLLECTOR_AFTER')
-          .maybeSingle();
-
-        if (fetchErr) throw fetchErr;
-
-        if (active && evidence && evidence.verification_results) {
-          const results = Array.isArray(evidence.verification_results)
-            ? evidence.verification_results
-            : [evidence.verification_results];
-
-          if (results.length > 0) {
-            const sorted = [...results].sort((a, b) =>
-              new Date(b.verified_at).getTime() - new Date(a.verified_at).getTime()
-            );
-            setExpandedVerification({
-              analysis: sorted[0].analysis,
-              decision: sorted[0].decision
-            });
-          } else {
-            setExpandedVerification(null);
-          }
-        } else {
-          setExpandedVerification(null);
-        }
-      } catch (err) {
-        console.error('Error fetching verification details:', err);
-        if (active) setExpandedVerification(null);
-      } finally {
-        if (active) setLoadingVerification(false);
-      }
-    };
-
-    fetchVerification();
-    return () => {
-      active = false;
-    };
-  }, [selectedRequestId]);
-
-  const formatVerificationAnalysis = (analysisText: string): string => {
-    if (!analysisText) return 'No detailed explanation was provided.';
-
-    if (analysisText.includes('Gemini Analysis:')) {
-      const reasoningIndex = analysisText.indexOf('Reasoning:');
-      if (reasoningIndex !== -1) {
-        return analysisText.substring(reasoningIndex + 10).trim();
-      }
-      if (analysisText.includes('Automated check failed:')) {
-        return 'The uploaded before and after images appear to be identical. Verification could not confirm collection.';
-      }
-      return 'The automated verification scan flagged anomalies in the evidence photos. Awaiting manual confirmation.';
-    }
-
-    return analysisText;
-  };
-
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'PENDING': return 'Pending';
-      case 'ASSIGNED': return 'Assigned';
-      case 'COLLECTED': return 'Under Verification';
-      case 'VERIFIED': return 'Verified';
-      case 'REJECTED': return 'Rejected';
-      default: return status;
-    }
-  };
-
-  // Rewards States
-  const [rewardsSummary, setRewardsSummary] = useState<{ balancePoints: number; lifetimePoints: number } | null>(null);
+  const [rewardsSummary, setRewardsSummary] = useState<{ balancePoints: number; lifetimePoints: number; rank: number } | null>(null);
   const [loadingRewards, setLoadingRewards] = useState(true);
+
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loadingTransactions, setLoadingTransactions] = useState(true);
 
-  const fetchRewardsSummary = async () => {
-    setLoadingRewards(true);
+  // ── Modal / Evidence uploads ───────────────────────────────────────────
+  const [isCollectModalOpen, setIsCollectModalOpen] = useState(false);
+  const [activeRequest, setActiveRequest] = useState<CollectionRequestDTO | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [isSubmittingEvidence, setIsSubmittingEvidence] = useState(false);
+  const [isSuccessState, setIsSuccessState] = useState(false);
+
+  // Camera states
+  const [cameraState, setCameraState] = useState<'off' | 'on' | 'captured'>('off');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [collectorLatitude, setCollectorLatitude] = useState<number | null>(null);
+  const [collectorLongitude, setCollectorLongitude] = useState<number | null>(null);
+  const [collectorGpsAccuracy, setCollectorGpsAccuracy] = useState<number | null>(null);
+  const [collectorGpsTimestamp, setCollectorGpsTimestamp] = useState<string | null>(null);
+
+  // Loading UI actions
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
+  // ── Auth and fetch hooks ───────────────────────────────────────────────
+  const handleLogout = async () => {
+    await supabaseBrowserClient.auth.signOut();
+    router.push('/auth/login');
+  };
+
+  const fetchRequests = async () => {
     try {
+      setLoadingRequests(true);
+      setRequestsError(null);
+      const { data: { session } } = await supabaseBrowserClient.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch('/api/collection-requests', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) throw new Error(result.error?.message || 'Failed to fetch collection requests.');
+      setRequests(result.data || []);
+    } catch (err: any) {
+      setRequestsError(err.message || 'An error occurred loading tasks list.');
+    } finally {
+      setLoadingRequests(false);
+    }
+  };
+
+  const fetchRewardsSummary = async () => {
+    try {
+      setLoadingRewards(true);
       const { data: { session } } = await supabaseBrowserClient.auth.getSession();
       if (!session) return;
 
       const res = await fetch('/api/rewards/summary', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
-
-      if (!res.ok) throw new Error('Failed to load rewards summary.');
       const result = await res.json();
-      if (result.success && result.data) {
-        setRewardsSummary(result.data);
-      }
-    } catch (err) {
-      console.error('Error fetching rewards summary:', err);
+      if (res.ok && result.success) setRewardsSummary(result.data);
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoadingRewards(false);
     }
   };
 
   const fetchRewardsHistory = async () => {
-    setLoadingTransactions(true);
     try {
+      setLoadingTransactions(true);
       const { data: { session } } = await supabaseBrowserClient.auth.getSession();
       if (!session) return;
 
       const res = await fetch('/api/rewards', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
-
-      if (!res.ok) throw new Error('Failed to load transactions.');
       const result = await res.json();
-      if (result.success && result.data) {
-        setTransactions(result.data);
-      }
-    } catch (err) {
-      console.error('Error fetching transactions:', err);
+      if (res.ok && result.success) setTransactions(result.data || []);
+    } catch (e) {
+      console.error(e);
     } finally {
       setLoadingTransactions(false);
     }
   };
 
-  // Active Tab: 'available' | 'assignments' | 'history' | 'rewards'
-  const [activeTab, setActiveTab] = useState<'available' | 'assignments' | 'history' | 'rewards'>('available');
-
-  // Claim/Collect Actions
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<string | null>(null); // holds requestId if loading
-
-  // Camera Evidence Modal States
-  const [isCollectModalOpen, setIsCollectModalOpen] = useState(false);
-  const [activeRequest, setActiveRequest] = useState<CollectionRequestDTO | null>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [isSubmittingEvidence, setIsSubmittingEvidence] = useState(false);
-  const [evidenceError, setEvidenceError] = useState<string | null>(null);
-  const [isSuccessState, setIsSuccessState] = useState(false);
-
-  // Collector GPS States
-  const [collectorLatitude, setCollectorLatitude] = useState<number | null>(null);
-  const [collectorLongitude, setCollectorLongitude] = useState<number | null>(null);
-  const [collectorGpsAccuracy, setCollectorGpsAccuracy] = useState<number | null>(null);
-  const [collectorGpsTimestamp, setCollectorGpsTimestamp] = useState<string | null>(null);
-
-  // Fetch location proactively when modal is opened
-  useEffect(() => {
-    if (isCollectModalOpen) {
-      setCollectorLatitude(null);
-      setCollectorLongitude(null);
-      setCollectorGpsAccuracy(null);
-      setCollectorGpsTimestamp(null);
-
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            setCollectorLatitude(position.coords.latitude);
-            setCollectorLongitude(position.coords.longitude);
-            setCollectorGpsAccuracy(position.coords.accuracy);
-            setCollectorGpsTimestamp(new Date(position.timestamp).toISOString());
-          },
-          (err) => {
-            console.warn('[Collector Geolocation mount high-accuracy error, trying fallback]:', err);
-            navigator.geolocation.getCurrentPosition(
-              (pos) => {
-                setCollectorLatitude(pos.coords.latitude);
-                setCollectorLongitude(pos.coords.longitude);
-                setCollectorGpsAccuracy(pos.coords.accuracy);
-                setCollectorGpsTimestamp(new Date(pos.timestamp).toISOString());
-              },
-              (err2) => {
-                console.warn('[Collector Geolocation fallback error]:', err2);
-              },
-              { enableHighAccuracy: false, timeout: 8000 }
-            );
-          },
-          { enableHighAccuracy: true, timeout: 5000 }
-        );
-      }
-    }
-  }, [isCollectModalOpen]);
-
-  // HTML5 Camera States
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isReviewing, setIsReviewing] = useState(false);
-  const [tempImagePreview, setTempImagePreview] = useState<string | null>(null);
-  const [tempFile, setTempFile] = useState<File | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
-  // Fetch Requests Function
-  const fetchRequests = async () => {
-    setLoadingRequests(true);
-    setRequestsError(null);
-    try {
-      const { data: { session } } = await supabaseBrowserClient.auth.getSession();
-      if (!session) return;
-
-      const res = await fetch('/api/collection-requests', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
-      });
-
-      if (!res.ok) throw new Error('Failed to load collection requests.');
-      const result = await res.json();
-      if (result.success && result.data) {
-        setRequests(result.data);
-      } else {
-        throw new Error(result.error?.message || 'Failed to parse requests.');
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not load requests.';
-      setRequestsError(msg);
-    } finally {
-      setLoadingRequests(false);
-    }
-  };
-
-  // 1. Initialize Profile & Fetch Data
   useEffect(() => {
     let active = true;
     const checkAuth = async () => {
+      setLoadingProfile(true);
       try {
         const { data: { session } } = await supabaseBrowserClient.auth.getSession();
         if (!session) {
@@ -280,182 +153,153 @@ export const CollectorDashboard: React.FC = () => {
           return;
         }
 
-        // Fetch User Role
-        const { data: userData } = await supabaseBrowserClient
+        const { data: userData, error: userError } = await supabaseBrowserClient
           .from('users')
-          .select('name, email, role')
+          .select('name, email, role, community_memberships(communities(name))')
           .eq('id', session.user.id)
           .single();
 
-        if (!userData || userData.role !== 'collector') {
-          console.warn('Unauthorized: Not a collector');
-          router.push('/resident'); // redirect residents to their dashboard
+        if (userError || !userData) throw new Error('Could not retrieve user record.');
+
+        if (userData.role !== 'collector') {
+          console.warn('Unauthorized collector redirection from:', userData.role);
+          if (userData.role === 'resident') {
+            router.push('/resident');
+          } else {
+            router.push('/municipality');
+          }
           return;
         }
 
-        // Fetch community membership
-        const { data: membership } = await supabaseBrowserClient
-          .from('community_memberships')
-          .select('community:communities(name)')
-          .eq('user_id', session.user.id)
-          .maybeSingle();
-
-        const commName = membership?.community
-          ? (Array.isArray(membership.community)
-              ? membership.community[0]?.name
-              : (membership.community as { name: string }).name)
-          : 'Maplewood District';
+        const rawMemberships = userData.community_memberships as any;
+        const membershipsArray = Array.isArray(rawMemberships) ? rawMemberships : [rawMemberships].filter(Boolean);
+        const communityObj = membershipsArray[0]?.communities;
+        const communityName = Array.isArray(communityObj) ? communityObj[0]?.name : communityObj?.name;
 
         if (active) {
           setProfile({
             name: userData.name,
             email: userData.email,
-            communityName: commName
+            communityName: communityName || 'My Community'
           });
-          setLoadingProfile(false);
-          // Fetch requests directly upon successful profile initialization
-          fetchRequests();
-          fetchRewardsSummary();
-          fetchRewardsHistory();
         }
       } catch (err) {
-        console.error('Collector auth check failed:', err);
-        if (active) router.push('/auth/login');
+        console.error('[CollectorDashboard AuthError]:', err);
+        router.push('/auth/login');
+      } finally {
+        if (active) setLoadingProfile(false);
       }
     };
 
     checkAuth();
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [router]);
 
-  // Handle Logout
-  const handleLogout = async () => {
-    await supabaseBrowserClient.auth.signOut();
-    router.push('/auth/login');
-  };
+  useEffect(() => {
+    if (profile) {
+      fetchRequests();
+      fetchRewardsSummary();
+      fetchRewardsHistory();
+    }
+  }, [profile]);
 
-  // Claim Request Handler
+  // ── Work flow handlers ──────────────────────────────────────────────────
   const handleClaim = async (requestId: string) => {
     setActionLoading(requestId);
     setActionError(null);
     try {
       const { data: { session } } = await supabaseBrowserClient.auth.getSession();
-      if (!session) throw new Error('Session expired. Please log in.');
+      if (!session) throw new Error('Not authenticated.');
 
       const res = await fetch(`/api/collection-requests/${requestId}/claim`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
 
       const result = await res.json();
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to claim request.');
-      }
-
-      // Re-fetch request list and switch tab
+      if (!res.ok || !result.success) throw new Error(result.error?.message || 'Collection claim failed.');
       await fetchRequests();
-      setActiveTab('assignments');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Claim action failed.';
-      setActionError(msg);
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to claim task.');
     } finally {
       setActionLoading(null);
     }
   };
 
-  // Camera Management
   const startCamera = async () => {
     setCameraError(null);
-    setIsCameraActive(true);
-    setIsReviewing(false);
     try {
-      const constraints = {
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      setCameraState('on');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
         audio: false
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      setCameraStream(stream);
+      });
+      cameraStreamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
-    } catch (err: unknown) {
-      console.error('Camera capture failed:', err);
-      try {
-        const fallback = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        setCameraStream(fallback);
-        if (videoRef.current) {
-          videoRef.current.srcObject = fallback;
-        }
-      } catch (fallbackErr) {
-        console.error('Fallback camera startup failed:', fallbackErr);
-        setCameraError('Camera access denied or unavailable. Grant permission.');
-        setIsCameraActive(false);
-      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setCollectorLatitude(position.coords.latitude);
+          setCollectorLongitude(position.coords.longitude);
+          setCollectorGpsAccuracy(position.coords.accuracy);
+          setCollectorGpsTimestamp(new Date(position.timestamp).toISOString());
+        },
+        (err) => {
+          console.warn('GPS capture warning:', err);
+          setCameraError('GPS coordinates capture failed. Proceeding with evidence upload...');
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+
+    } catch (err: any) {
+      console.error('Camera access error:', err);
+      setCameraError('Failed to initialize device camera stream. Please upload photo manually.');
+      setCameraState('off');
     }
   };
 
   const stopCamera = () => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(track => track.stop());
+      cameraStreamRef.current = null;
     }
-    setIsCameraActive(false);
-    setIsReviewing(false);
-    setTempImagePreview(null);
-    setTempFile(null);
+    setCameraState('off');
   };
 
-  const handleCapture = () => {
-    if (videoRef.current) {
-      const video = videoRef.current;
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const file = new File([blob], 'captured-after.jpg', { type: 'image/jpeg' });
-            setTempFile(file);
-            setTempImagePreview(URL.createObjectURL(blob));
-            setIsReviewing(true);
-
-            if (cameraStream) {
-              cameraStream.getTracks().forEach(track => track.stop());
-              setCameraStream(null);
-            }
-          }
-        }, 'image/jpeg', 0.85);
-      }
+  const capturePhoto = () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth || 640;
+    canvas.height = videoRef.current.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const file = new File([blob], `evidence_${Date.now()}.jpg`, { type: 'image/jpeg' });
+          setSelectedFile(file);
+          const url = URL.createObjectURL(blob);
+          setImagePreview(url);
+          setCameraState('captured');
+        }
+      }, 'image/jpeg', 0.85);
     }
+    stopCamera();
   };
 
-  const handleRetake = async () => {
-    setTempImagePreview(null);
-    setTempFile(null);
-    setIsReviewing(false);
-    await startCamera();
-  };
-
-  const handleConfirm = () => {
-    if (tempImagePreview && tempFile) {
-      setSelectedFile(tempFile);
-      setImagePreview(tempImagePreview);
-      setIsCameraActive(false);
-      setIsReviewing(false);
-      setTempImagePreview(null);
-      setTempFile(null);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      const url = URL.createObjectURL(file);
+      setImagePreview(url);
+      setCameraState('captured');
     }
   };
 
-  // Submit Evidence Handler
-  const handleSubmitEvidence = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleEvidenceSubmit = async () => {
     if (!selectedFile || !activeRequest) return;
 
     setIsSubmittingEvidence(true);
@@ -463,35 +307,28 @@ export const CollectorDashboard: React.FC = () => {
 
     try {
       const { data: { session } } = await supabaseBrowserClient.auth.getSession();
-      if (!session) throw new Error('Session expired. Please log in.');
+      if (!session) throw new Error('Session expired. Log in again.');
 
       const formData = new FormData();
       formData.append('file', selectedFile);
       formData.append('collectionRequestId', activeRequest.id);
       formData.append('evidenceType', 'COLLECTOR_AFTER');
+
       if (collectorLatitude !== null && collectorLongitude !== null) {
         formData.append('latitude', collectorLatitude.toString());
         formData.append('longitude', collectorLongitude.toString());
-        if (collectorGpsAccuracy !== null) {
-          formData.append('gpsAccuracy', collectorGpsAccuracy.toString());
-        }
-        if (collectorGpsTimestamp !== null) {
-          formData.append('gpsCapturedAt', collectorGpsTimestamp);
-        }
+        if (collectorGpsAccuracy !== null) formData.append('gpsAccuracy', collectorGpsAccuracy.toString());
+        if (collectorGpsTimestamp !== null) formData.append('gpsCapturedAt', collectorGpsTimestamp);
       }
 
       const res = await fetch('/api/evidence', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        },
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
         body: formData
       });
 
       const result = await res.json();
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to submit collected evidence.');
-      }
+      if (!res.ok || !result.success) throw new Error(result.error?.message || 'Failed to submit collected evidence.');
 
       setIsSuccessState(true);
       await fetchRequests();
@@ -515,28 +352,20 @@ export const CollectorDashboard: React.FC = () => {
     setEvidenceError(null);
   };
 
-  // Filters based on tabs
   const getFilteredRequests = () => {
-
     return requests.filter(req => {
-      if (activeTab === 'available') {
-        return req.status === 'PENDING';
-      }
-      if (activeTab === 'assignments') {
-        return req.status === 'ASSIGNED';
-      }
-      if (activeTab === 'history') {
-        return ['COLLECTED', 'VERIFIED', 'REJECTED'].includes(req.status);
-      }
+      if (activeTab === 'available') return req.status === 'PENDING';
+      if (activeTab === 'assignments') return req.status === 'ASSIGNED';
+      if (activeTab === 'history') return ['COLLECTED', 'VERIFIED', 'REJECTED'].includes(req.status);
       return false;
     });
   };
 
   if (loadingProfile) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100">
-        <Loader2 className="w-10 h-10 animate-spin text-emerald-500 mb-4" />
-        <p className="text-sm font-semibold tracking-wider">Loading Collector Session...</p>
+      <div className="min-h-screen bg-[#14171A] flex flex-col items-center justify-center text-slate-100">
+        <Loader2 className="w-8 h-8 animate-spin text-terra-500 mb-4" />
+        <p className="text-xs text-charcoal-400 font-bold uppercase tracking-widest">Loading Collector Dashboard...</p>
       </div>
     );
   }
@@ -544,517 +373,362 @@ export const CollectorDashboard: React.FC = () => {
   const filteredRequests = getFilteredRequests();
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased pb-12">
-      {/* Navbar header */}
-      <header className="sticky top-0 z-40 bg-slate-900/80 backdrop-blur-md border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+    <div className="min-h-screen bg-[#14171A] text-[#F0F2F5] pb-12 relative overflow-hidden" style={{ fontFamily: 'var(--font-geist-sans)' }}>
+      {/* Aurora mesh background layer */}
+      <BackgroundMesh role="collector" />
+
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-[#14171A]/90 backdrop-blur-md border-b border-white/[0.07] px-6 py-4 flex items-center justify-between relative">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center shadow-md shadow-emerald-500/20">
+          <div className="h-10 w-10 rounded-xl bg-terra-600 flex items-center justify-center shadow-lg"
+            style={{ boxShadow: '0 4px 14px rgba(194,83,42,0.3)' }}>
             <Leaf className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-base font-black tracking-tight text-white flex items-center gap-1.5">
-              EcoClean <span className="px-2 py-0.5 rounded-md bg-teal-500/10 text-teal-400 text-3xs font-extrabold uppercase border border-teal-500/20">Collector</span>
+            <h1 className="font-display text-base font-black tracking-tight text-white flex items-center gap-1.5">
+              Swachh Circuit <span className="sc-pill sc-pill-assigned text-[8px] font-black uppercase">Collector</span>
             </h1>
-            <p className="text-slate-400 text-3xs font-bold flex items-center gap-1">
-              <MapPin className="w-3 h-3 text-emerald-500" />
+            <p className="text-charcoal-400 text-3xs font-bold flex items-center gap-1 mt-0.5">
+              <MapPin className="w-3 h-3 text-terra-500" />
               {profile?.communityName}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="hidden sm:flex items-center gap-2.5 text-right">
-            <span className="text-2xs font-extrabold text-slate-200 block">{profile?.name}</span>
-            <span className="text-3xs text-slate-450 block font-bold">{profile?.email}</span>
+          <div className="hidden sm:flex flex-col text-right">
+            <span className="text-2xs font-extrabold text-slate-200">{profile?.name}</span>
+            <span className="text-3xs text-charcoal-500 font-mono">{profile?.email}</span>
           </div>
           <button
             onClick={handleLogout}
-            className="p-2.5 bg-slate-850 hover:bg-rose-950/20 hover:text-rose-400 rounded-xl transition-all border border-slate-800 hover:border-rose-900/30 text-slate-400 cursor-pointer"
+            className="sc-btn-rose"
+            style={{ padding: '0.45rem 0.85rem', fontSize: '0.75rem' }}
             title="Log Out"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Log Out</span>
           </button>
         </div>
       </header>
 
-      {/* Main dashboard body */}
-      <main className="max-w-4xl mx-auto px-6 mt-8">
-        {/* Statistics panel */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-            <span className="text-3xs text-slate-500 uppercase tracking-widest font-black block">Available Requests</span>
-            <span className="text-2xl font-black text-white mt-1 block">
-              {requests.filter(r => r.status === 'PENDING').length}
-            </span>
-          </div>
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-            <span className="text-3xs text-slate-500 uppercase tracking-widest font-black block">My Assignments</span>
-            <span className="text-2xl font-black text-teal-400 mt-1 block">
-              {requests.filter(r => r.status === 'ASSIGNED').length}
-            </span>
-          </div>
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-            <span className="text-3xs text-slate-500 uppercase tracking-widest font-black block">Completed Pickups</span>
-            <span className="text-2xl font-black text-emerald-450 mt-1 block">
-              {requests.filter(r => ['COLLECTED', 'VERIFIED'].includes(r.status)).length}
-            </span>
-          </div>
-          <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex items-center justify-between">
-            <div>
-              <span className="text-3xs text-slate-500 uppercase tracking-widest font-black block">My Reward Points</span>
-              <span className="text-2xl font-black text-amber-400 mt-1 block">
-                {loadingRewards ? (
-                  <Loader2 className="w-5 h-5 animate-spin text-slate-600" />
-                ) : (
-                  rewardsSummary?.balancePoints ?? 0
-                )}
-              </span>
-            </div>
-            <Award className="w-8 h-8 text-amber-500/25 shrink-0" />
-          </div>
-        </section>
+      {/* Main Body structured as a Bento Grid */}
+      <main className="max-w-7xl mx-auto px-6 mt-8 relative z-10">
+        <div className="grid grid-cols-12 gap-6">
 
-        {/* Tab switcher */}
-        <div className="flex border-b border-slate-800 gap-1.5 mb-6">
-          <button
-            onClick={() => setActiveTab('available')}
-            className={`pb-3.5 px-4 text-xs font-bold relative transition-colors flex items-center gap-2 cursor-pointer ${
-              activeTab === 'available' ? 'text-emerald-450' : 'text-slate-450 hover:text-slate-300'
-            }`}
-          >
-            <Inbox className="w-4 h-4" />
-            Available Pickups
-            {activeTab === 'available' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-450 rounded-full" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('assignments')}
-            className={`pb-3.5 px-4 text-xs font-bold relative transition-colors flex items-center gap-2 cursor-pointer ${
-              activeTab === 'assignments' ? 'text-teal-400' : 'text-slate-450 hover:text-slate-300'
-            }`}
-          >
-            <CheckSquare className="w-4 h-4" />
-            My Assignments
-            {activeTab === 'assignments' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-teal-400 rounded-full" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`pb-3.5 px-4 text-xs font-bold relative transition-colors flex items-center gap-2 cursor-pointer ${
-              activeTab === 'history' ? 'text-slate-200' : 'text-slate-450 hover:text-slate-300'
-            }`}
-          >
-            <History className="w-4 h-4" />
-            Pickup History
-            {activeTab === 'history' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-200 rounded-full" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('rewards')}
-            className={`pb-3.5 px-4 text-xs font-bold relative transition-colors flex items-center gap-2 cursor-pointer ${
-              activeTab === 'rewards' ? 'text-amber-400' : 'text-slate-450 hover:text-slate-300'
-            }`}
-          >
-            <Award className="w-4 h-4" />
-            My Rewards
-            {activeTab === 'rewards' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-amber-450 rounded-full" />}
-          </button>
-        </div>
-
-        {/* Display action errors if any */}
-        {actionError && (
-          <div className="flex items-start gap-2.5 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-xs text-rose-400 mb-6">
-            <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
-            <span>{actionError}</span>
-          </div>
-        )}
-
-        {/* Request cards list */}
-        {activeTab === 'rewards' ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-4 animate-fade-in">
-            {/* Rewards Balance Card */}
-            <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-500/20 rounded-3xl p-6 flex flex-col justify-between shadow-sm">
+          {/* 1. LARGE BENTO TILE: Claimable Jobs List (col-span-12 lg:col-span-8) */}
+          <div className="col-span-12 lg:col-span-8 sc-glass sc-shadow-stack p-6 rounded-3xl flex flex-col space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-white/[0.05]">
               <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-2.5 bg-amber-500/20 text-amber-450 rounded-2xl">
-                    <Gift className="w-6 h-6" />
-                  </div>
-                  <span className="text-2xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">Active Balance</span>
-                </div>
-                <span className="text-4xl font-extrabold text-white tracking-tight">
-                  {loadingRewards ? '...' : (rewardsSummary?.balancePoints ?? 0)}
-                </span>
-                <span className="text-xs text-slate-400 block mt-1">Available reward points</span>
+                <h2 className="font-display text-base font-extrabold text-white flex items-center gap-2">
+                  <Inbox className="w-5 h-5 text-terra-500" />
+                  Active Assignments Queue
+                </h2>
+                <p className="text-3xs text-charcoal-400 mt-0.5">Claim garbage pick up tasks and upload cleanup evidence</p>
               </div>
-              <div className="mt-8 pt-4 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between font-bold">
-                <span>Lifetime Points Earned:</span>
-                <span className="text-white">
+
+              {/* Tab Selector */}
+              <div className="flex gap-1.5 bg-white/5 p-1 rounded-xl border border-white/[0.04] self-end sm:self-auto">
+                <button
+                  onClick={() => setActiveTab('available')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all ${activeTab === 'available' ? 'bg-terra-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
+                >
+                  Available ({requests.filter(r => r.status === 'PENDING').length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('assignments')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all ${activeTab === 'assignments' ? 'bg-terra-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
+                >
+                  Claimed ({requests.filter(r => r.status === 'ASSIGNED').length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('history')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all ${activeTab === 'history' ? 'bg-terra-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
+                >
+                  History
+                </button>
+              </div>
+            </div>
+
+            {/* Error indicators */}
+            {actionError && (
+              <div className="flex items-start gap-2.5 p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-xs text-rose-300">
+                <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
+                <span>{actionError}</span>
+              </div>
+            )}
+
+            {/* Request Card render list */}
+            <div className="flex-1 overflow-y-auto max-h-[460px] pr-1 space-y-3">
+              {loadingRequests ? (
+                <div className="py-20 flex flex-col items-center justify-center text-charcoal-550">
+                  <Loader2 className="w-8 h-8 animate-spin text-terra-500 mb-2" />
+                  <span className="text-3xs uppercase tracking-widest font-black">Retrieving queue...</span>
+                </div>
+              ) : requestsError ? (
+                <div className="py-16 text-center text-charcoal-500 bg-white/[0.01] border border-white/[0.04] rounded-2xl">
+                  <AlertCircle className="w-9 h-9 mx-auto text-charcoal-600 mb-2" />
+                  <p className="text-xs font-semibold">{requestsError}</p>
+                </div>
+              ) : filteredRequests.length === 0 ? (
+                <div className="sc-empty py-20 text-center text-charcoal-500 bg-white/[0.01] border border-white/[0.04] rounded-3xl">
+                  <Inbox className="w-10 h-10 mx-auto text-charcoal-600 mb-3" />
+                  <p className="text-xs font-semibold text-white">No active requests</p>
+                  <p className="text-2xs mt-1">Assignments claimed or waiting for citizen uploads will appear here.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredRequests.map((req) => {
+                    const isExpanded = selectedRequestId === req.id;
+                    return (
+                      <div
+                        key={req.id}
+                        className={`sc-card p-4 flex flex-col gap-3 transition-all hover:border-white/[0.12] ${
+                          activeTab === 'history' ? 'cursor-pointer select-none' : ''
+                        }`}
+                        onClick={() => {
+                          if (activeTab === 'history') {
+                            setSelectedRequestId(isExpanded ? null : req.id);
+                          }
+                        }}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-white block">{req.residentName || 'Resident'}</span>
+                              <span className={getStatusPillClass(req.status)}>
+                                {getStatusLabel(req.status)}
+                              </span>
+                            </div>
+                            <span className="text-3xs text-charcoal-400 block mt-0.5 flex items-center gap-1 font-mono">
+                              ID: {req.id} · Requested: {new Date(req.requestedAt).toLocaleDateString()}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2.5 self-end sm:self-center">
+                            {req.status === 'PENDING' && (
+                              <button
+                                onClick={() => handleClaim(req.id)}
+                                disabled={actionLoading !== null}
+                                className="sc-btn-primary py-2 px-3 text-2xs"
+                              >
+                                {actionLoading === req.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  'Claim Task'
+                                )}
+                              </button>
+                            )}
+                            {req.status === 'ASSIGNED' && (
+                              <button
+                                onClick={() => {
+                                  setActiveRequest(req);
+                                  setIsCollectModalOpen(true);
+                                }}
+                                className="sc-btn-primary py-2 px-3 text-2xs"
+                              >
+                                <Camera className="w-3.5 h-3.5" /> Submit Evidence
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* History expansion details */}
+                        {isExpanded && activeTab === 'history' && (
+                          <div className="mt-3 pt-3 border-t border-white/[0.04] text-xs text-charcoal-450 grid grid-cols-2 gap-4 font-semibold">
+                            <div>
+                              <span>Assigned to you:</span>
+                              <span className="text-white block mt-0.5">Community Collector</span>
+                            </div>
+                            <div>
+                              <span>Completion status:</span>
+                              <span className="text-white block mt-0.5">Verification Scan Complete</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 2. MEDIUM BENTO TILE: Today's Assignment statistics (col-span-12 md:col-span-6 lg:col-span-4) */}
+          <div className="col-span-12 md:col-span-6 lg:col-span-4 sc-glass sc-shadow-stack p-6 rounded-3xl flex flex-col justify-between">
+            <div>
+              <span className="text-[10px] text-terra-400 font-black uppercase tracking-wider">Today&apos;s Action Summary</span>
+              <h3 className="text-sm font-extrabold text-white mt-0.5">Operations ledger</h3>
+            </div>
+
+            <div className="space-y-3.5 my-4">
+              <div className="bg-black/20 p-3.5 rounded-2xl border border-white/[0.03] flex justify-between items-center">
+                <div>
+                  <span className="text-3xs text-charcoal-550 block font-bold uppercase tracking-wider">Pending Available</span>
+                  <span className="text-xl font-black text-white mt-0.5 block">
+                    {requests.filter(r => r.status === 'PENDING').length}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-3xs text-charcoal-550 block font-bold uppercase tracking-wider">Active Tasks</span>
+                  <span className="text-xl font-black text-terra-400 mt-0.5 block">
+                    {requests.filter(r => r.status === 'ASSIGNED').length}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center text-xs font-bold text-charcoal-400 px-1">
+                <span>Completed verification scans:</span>
+                <span className="text-forest-400">
+                  {requests.filter(r => ['COLLECTED', 'VERIFIED'].includes(r.status)).length} tasks
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={fetchRequests}
+              className="sc-btn-ghost w-full py-2.5 flex items-center justify-center gap-2 text-3xs font-black uppercase tracking-wider border-white/[0.05]"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Synchronize List
+            </button>
+          </div>
+
+          {/* 3. SMALL BENTO TILE: Rewards / Standing Summary (col-span-12 md:col-span-6 lg:col-span-4) */}
+          <div className="col-span-12 md:col-span-6 lg:col-span-4 sc-glass sc-shadow-stack p-6 rounded-3xl flex flex-col justify-between">
+            <div className="flex justify-between items-start">
+              <div>
+                <span className="text-[10px] text-marigold-500 font-black uppercase tracking-wider">Earnings Summary</span>
+                <h3 className="text-sm font-extrabold text-white mt-0.5">Points Ledger</h3>
+              </div>
+              <div className="h-10 w-10 rounded-full bg-marigold-500/15 flex items-center justify-center text-lg border border-marigold-500/20">
+                ⭐
+              </div>
+            </div>
+
+            <div className="bg-black/20 p-4 rounded-2xl border border-white/[0.03] my-4 flex items-center justify-between">
+              <div>
+                <span className="text-3xs text-charcoal-500 font-black uppercase">Points Balance</span>
+                <span className="text-2xl font-black text-marigold-400 mt-0.5 block">
+                  {loadingRewards ? '...' : (rewardsSummary?.balancePoints ?? 0)} pts
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-3xs text-charcoal-550 font-black uppercase block">Lifetime</span>
+                <span className="text-2xs font-extrabold text-charcoal-300 block mt-1">
                   {loadingRewards ? '...' : (rewardsSummary?.lifetimePoints ?? 0)}
                 </span>
               </div>
             </div>
 
-            {/* Standing Card */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 flex flex-col justify-between shadow-sm">
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="p-2.5 bg-teal-500/10 text-teal-400 rounded-2xl">
-                    <Trophy className="w-6 h-6" />
-                  </div>
-                  <span className="text-2xs font-bold text-teal-400 bg-teal-500/10 border border-teal-500/20 px-2 py-0.5 rounded-full">Standing</span>
-                </div>
-                <span className="text-3xl font-extrabold text-white tracking-tight">
-                  Eco-Hero
-                </span>
-                <span className="text-xs text-slate-400 block mt-1">Active collector rank status</span>
-              </div>
-              <div className="mt-8 pt-4 border-t border-slate-800 text-xs text-slate-400 flex items-center gap-1 font-bold">
-                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-                <span>Top performer in district</span>
-              </div>
-            </div>
-
-            {/* Reward Transaction History */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Recent Transactions</h3>
-              <div className="space-y-3.5 max-h-[300px] overflow-y-auto pr-1">
-                {loadingTransactions ? (
-                  <div className="flex flex-col items-center justify-center py-6 text-slate-500 gap-2">
-                    <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
-                    <span className="text-2xs">Loading transactions...</span>
-                  </div>
-                ) : transactions.length === 0 ? (
-                  <div className="text-center py-6 text-slate-500">
-                    <p className="text-xs font-semibold">No transactions found</p>
-                    <p className="text-2xs mt-0.5">Your points history will appear here.</p>
-                  </div>
-                ) : (
-                  transactions.map((tx) => (
-                    <div key={tx.id} className="flex items-center justify-between text-xs py-1 border-b border-slate-800 last:border-b-0">
-                      <div>
-                        <span className="font-bold text-slate-200 block">{tx.reason}</span>
-                        <span className="text-slate-455 block mt-0.5 text-3xs font-semibold">
-                          {tx.createdAt ? new Date(tx.createdAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : ''}
-                        </span>
-                      </div>
-                      <span className="font-extrabold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md">
-                        +{tx.points}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
+            <div className="flex justify-between items-center text-xs font-bold text-charcoal-400 pt-2 px-1 border-t border-white/[0.04]">
+              <span>Eco-Hero Standing:</span>
+              <span className="text-forest-400">Top 3% performer</span>
             </div>
           </div>
-        ) : loadingRequests ? (
-          <div className="py-20 flex flex-col items-center justify-center text-slate-500">
-            <Loader2 className="w-7 h-7 animate-spin text-slate-700 mb-2" />
-            <p className="text-2xs font-bold uppercase tracking-wider">Loading Requests...</p>
-          </div>
-        ) : requestsError ? (
-          <div className="py-20 text-center text-slate-500">
-            <AlertCircle className="w-10 h-10 mx-auto text-slate-750 mb-3" />
-            <p className="text-2xs font-bold uppercase tracking-wider">{requestsError}</p>
-          </div>
-        ) : filteredRequests.length === 0 ? (
-          <div className="py-24 border border-dashed border-slate-800 rounded-3xl text-center text-slate-500">
-            <Inbox className="w-10 h-10 mx-auto text-slate-800 mb-3" />
-            <p className="text-2xs font-bold uppercase tracking-wider">No requests found in this tab.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {filteredRequests.map((req) => {
-              const isExpanded = selectedRequestId === req.id;
-              return (
-                <div
-                  key={req.id}
-                  className={`p-5 bg-slate-900 border border-slate-800/80 rounded-2xl flex flex-col gap-4 transition-all hover:border-slate-850 shadow-sm ${
-                    activeTab === 'history' ? 'cursor-pointer select-none' : ''
-                  }`}
-                  onClick={() => {
-                    if (activeTab === 'history') {
-                      setSelectedRequestId(isExpanded ? null : req.id);
-                    }
-                  }}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xs font-extrabold text-slate-200 block">{req.residentName || 'Resident'}</span>
-                        <span className="text-3xs px-2 py-0.5 rounded-full font-black uppercase tracking-wider text-slate-400 bg-slate-850 border border-slate-800">
-                          {getStatusLabel(req.status)}
-                        </span>
-                      </div>
 
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-3xs text-slate-450 font-semibold">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-slate-500" />
-                          Submitted: {new Date(req.requestedAt).toLocaleDateString()} at {new Date(req.requestedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3.5 self-end sm:self-center">
-                      {req.status === 'PENDING' && (
-                        <button
-                          onClick={() => handleClaim(req.id)}
-                          disabled={actionLoading !== null}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-                        >
-                          {actionLoading === req.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin mx-auto" />
-                          ) : (
-                            'Claim Collection'
-                          )}
-                        </button>
-                      )}
-
-                      {req.status === 'ASSIGNED' && (
-                        <button
-                          onClick={() => {
-                            setActiveRequest(req);
-                            setIsCollectModalOpen(true);
-                          }}
-                          className="px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-                        >
-                          Collect Waste
-                        </button>
-                      )}
-
-                      {['COLLECTED', 'VERIFIED', 'REJECTED'].includes(req.status) && (
-                        <div className="flex items-center gap-2 text-right text-3xs text-slate-500 font-extrabold uppercase">
-                          {req.completedAt && (
-                            <span>Completed: {new Date(req.completedAt).toLocaleDateString()}</span>
-                          )}
-                          <ChevronRight className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {activeTab === 'history' && isExpanded && (
-                    <div className="border-t border-slate-800/80 pt-4 mt-1 space-y-3 text-xs">
-                      {req.status === 'VERIFIED' && (
-                        <div className="p-3 bg-emerald-500/5 border border-emerald-500/10 rounded-xl space-y-1 text-2xs">
-                          <span className="font-bold text-emerald-450 block flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-450" />
-                            Collection Verified
-                          </span>
-                          <p className="text-slate-405 leading-relaxed">
-                            Your collection evidence was successfully verified.
-                          </p>
-                          <p className="text-emerald-400 font-extrabold mt-1">
-                            100 Points Awarded to Resident
-                          </p>
-                        </div>
-                      )}
-
-                      {req.status === 'COLLECTED' && (
-                        <div className="p-3 bg-blue-500/5 border border-blue-500/10 rounded-xl space-y-1 text-2xs">
-                          <span className="font-bold text-blue-400 block flex items-center gap-1.5">
-                            <Clock className="w-3.5 h-3.5 text-blue-400" />
-                            Under Verification
-                          </span>
-                          <p className="text-slate-405 leading-relaxed">
-                            Your collection evidence is being verified. If the automated check cannot confirm the collection, the request will be reviewed by the Municipality.
-                          </p>
-                        </div>
-                      )}
-
-                      {req.status === 'REJECTED' && (
-                        <div className="p-3 bg-rose-500/5 border border-rose-500/10 rounded-xl space-y-1 text-2xs">
-                          <span className="font-bold text-rose-450 block flex items-center gap-1.5">
-                            <AlertCircle className="w-3.5 h-3.5 text-rose-450" />
-                            Why was this rejected?
-                          </span>
-                          <p className="text-slate-405 leading-relaxed font-semibold">
-                            {loadingVerification ? (
-                              <span className="flex items-center gap-1.5 text-slate-500">
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                Retrieving verification details...
-                              </span>
-                            ) : expandedVerification ? (
-                              formatVerificationAnalysis(expandedVerification.analysis)
-                            ) : (
-                              'The uploaded evidence photos did not meet the validation requirements.'
-                            )}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        </div>
       </main>
 
-      {/* Camera Capture Modal */}
+      {/* ── Evidence upload camera modal ───────────────────────────── */}
       {isCollectModalOpen && activeRequest && (
-        <div className="fixed inset-0 z-50 overflow-hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs transition-opacity" onClick={closeCollectModal}></div>
-
-          <div className="absolute inset-0 overflow-hidden flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col text-slate-100">
-
-              {/* Modal Header */}
-              <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
-                <div>
-                  <h3 className="text-sm font-extrabold text-white">Record Evidence (AFTER)</h3>
-                  <p className="text-slate-450 text-3xs font-semibold mt-0.5">Capture garbage cleanup evidence for {activeRequest.residentName}</p>
-                </div>
-                <button onClick={closeCollectModal} className="rounded-xl p-1.5 hover:bg-slate-800 transition-colors text-slate-400 cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="sc-glass sc-shadow-stack w-full max-w-lg p-6 rounded-3xl flex flex-col space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="text-base font-bold text-white">Collector Evidence Submission</h3>
+                <p className="text-3xs text-charcoal-400 mt-0.5">Request ID: {activeRequest.id}</p>
               </div>
+              <button onClick={closeCollectModal} className="text-charcoal-400 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-              {/* Modal Body */}
-              <div className="p-6 flex-1 flex flex-col justify-between min-h-[300px]">
-                {isSuccessState ? (
-                  <div className="py-12 flex flex-col items-center justify-center text-center space-y-4">
-                    <div className="h-16 w-16 bg-emerald-500/10 border border-emerald-500/20 text-emerald-450 rounded-full flex items-center justify-center">
-                      <CheckCircle2 className="w-8 h-8" />
-                    </div>
-                    <div>
-                      <h4 className="text-base font-black text-white">Evidence Uploaded!</h4>
-                      <p className="text-slate-400 text-3xs font-bold mt-1 leading-relaxed max-w-xs mx-auto">
-                        Verification is in progress. The resident will receive reward points once verified.
-                      </p>
-                    </div>
-                    <button
-                      onClick={closeCollectModal}
-                      className="mt-6 px-5 py-2.5 bg-white hover:bg-slate-100 text-slate-900 font-extrabold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-                    >
-                      Close Dashboard
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={handleSubmitEvidence} className="space-y-6 flex-1 flex flex-col justify-between">
-                    <div className="space-y-3 flex-1">
-                      {imagePreview ? (
-                        <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-slate-950 aspect-video flex items-center justify-center group">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={imagePreview} alt="Captured after cleanup" className="object-cover w-full h-full" />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setImagePreview(null);
-                              setSelectedFile(null);
-                            }}
-                            className="absolute top-3 right-3 p-1.5 rounded-full bg-slate-950/80 hover:bg-slate-950 text-white border border-slate-800 cursor-pointer"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : isCameraActive ? (
-                        <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-black aspect-video flex items-center justify-center">
-                          {isReviewing && tempImagePreview ? (
-                            <>
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={tempImagePreview} alt="Review capture" className="w-full h-full object-cover" />
-                              <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-3 px-4">
-                                <button
-                                  type="button"
-                                  onClick={handleRetake}
-                                  className="px-4 py-2.5 bg-slate-850 hover:bg-slate-800 text-white text-3xs font-extrabold rounded-xl flex items-center gap-1.5 shadow-md border border-slate-800 cursor-pointer"
-                                >
-                                  <RefreshCw className="w-3.5 h-3.5" />
-                                  Retake
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleConfirm}
-                                  className="px-4 py-2.5 bg-emerald-650 hover:bg-emerald-600 text-white text-3xs font-extrabold rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
-                                >
-                                  <Check className="w-3.5 h-3.5" />
-                                  Confirm
-                                </button>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <video
-                                ref={videoRef}
-                                autoPlay
-                                playsInline
-                                className="w-full h-full object-cover"
-                              />
-                              <button
-                                type="button"
-                                onClick={handleCapture}
-                                className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-650 hover:bg-emerald-600 text-white text-3xs font-extrabold rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer"
-                              >
-                                <Camera className="w-3.5 h-3.5" />
-                                Capture Photo
-                              </button>
-                            </>
-                          )}
-                          <button
-                            type="button"
-                            onClick={stopCamera}
-                            className="absolute top-3 right-3 p-1.5 rounded-full bg-slate-950/80 hover:bg-slate-950 text-white border border-slate-800 cursor-pointer"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          <button
-                            type="button"
-                            onClick={startCamera}
-                            className="w-full border border-dashed border-slate-800 hover:border-emerald-500/30 rounded-2xl p-8 text-center bg-slate-950/20 transition-all flex flex-col items-center justify-center gap-2.5 group cursor-pointer"
-                          >
-                            <div className="p-3.5 bg-slate-900 border border-slate-800 text-slate-500 group-hover:text-emerald-500 rounded-2xl shadow-xs transition-all">
-                              <Camera className="w-6 h-6" />
-                            </div>
-                            <div>
-                              <span className="text-xs font-bold text-slate-300 block">Open Camera to Snap AFTER Photo</span>
-                              <span className="text-3xs text-slate-500 block mt-1 leading-relaxed max-w-xs mx-auto font-semibold">
-                                Secure camera evidence is required. Snap the clean site at the community bin.
-                              </span>
-                            </div>
-                          </button>
-                          {cameraError && (
-                            <div className="flex items-start gap-2 p-3 bg-rose-500/5 border border-rose-500/10 rounded-2xl text-3xs text-rose-450 font-bold">
-                              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                              <span>{cameraError}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
+            {/* OPAQUE LIVE VIDEO FEED / STATIC PHOTO PREVIEW */}
+            <div className="relative aspect-video rounded-2xl overflow-hidden bg-black border border-white/[0.08]">
+              {cameraState === 'on' ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+              ) : imagePreview ? (
+                <Image
+                  src={imagePreview}
+                  alt="Captured evidence preview"
+                  fill
+                  sizes="400px"
+                  className="object-cover"
+                  unoptimized
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center text-charcoal-550 text-3xs font-bold uppercase tracking-wider gap-2">
+                  <Camera className="w-8 h-8" />
+                  Camera Feed Closed
+                </div>
+              )}
+            </div>
 
-                      {evidenceError && (
-                        <div className="flex items-start gap-2 p-3 bg-rose-500/5 border border-rose-500/10 rounded-2xl text-3xs text-rose-450 font-bold">
-                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                          <span>{evidenceError}</span>
-                        </div>
-                      )}
-                    </div>
+            {/* ERROR STATS BAR */}
+            {(cameraError || evidenceError) && (
+              <div className="bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs p-3.5 rounded-2xl flex items-start gap-2.5">
+                <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
+                <span>{cameraError || evidenceError}</span>
+              </div>
+            )}
 
-                    {/* Footer buttons */}
-                    <div className="pt-5 border-t border-slate-850 flex items-center justify-end gap-3">
-                      <button
-                        type="button"
-                        onClick={closeCollectModal}
-                        className="px-4 py-2 text-3xs font-extrabold text-slate-400 hover:bg-slate-850 rounded-xl transition-colors cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={isSubmittingEvidence || !imagePreview}
-                        className={`px-5 py-2.5 font-bold text-3xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer ${
-                          imagePreview
-                            ? 'bg-gradient-to-r from-emerald-600 to-teal-650 text-white hover:from-emerald-500 hover:to-teal-550'
-                            : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-850'
-                        }`}
-                      >
-                        {isSubmittingEvidence && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        {isSubmittingEvidence ? 'Submitting...' : 'Upload & Complete Pickup'}
-                      </button>
-                    </div>
-                  </form>
+            {/* CONTROLS (Frosted chrome area surrounding video) */}
+            <div className="pt-2 flex flex-col gap-2.5">
+              <div className="flex justify-center gap-2">
+                {cameraState === 'off' && !imagePreview && (
+                  <button onClick={startCamera} className="sc-btn-primary py-2.5 px-4 text-xs font-bold">
+                    <Camera className="w-4 h-4" /> Start Device Camera
+                  </button>
+                )}
+                {cameraState === 'on' && (
+                  <button onClick={capturePhoto} className="sc-btn-primary py-2.5 px-4 text-xs font-bold bg-terra-600 hover:bg-terra-500">
+                    Capture Photo
+                  </button>
+                )}
+                {cameraState === 'captured' && (
+                  <button onClick={startCamera} className="sc-btn-ghost py-2.5 px-4 text-xs font-bold border-white/[0.08]">
+                    Retake Photo
+                  </button>
                 )}
               </div>
 
+              {cameraState === 'off' && (
+                <div className="flex flex-col items-center text-center">
+                  <span className="text-charcoal-500 text-[10px] uppercase tracking-widest font-black">Or upload file</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    id="evidence-file-input"
+                  />
+                  <label
+                    htmlFor="evidence-file-input"
+                    className="sc-btn-ghost mt-2 py-2 px-4 text-2xs font-extrabold cursor-pointer border-white/[0.08]"
+                  >
+                    Select File
+                  </label>
+                </div>
+              )}
+
+              {imagePreview && cameraState === 'captured' && (
+                <button
+                  onClick={handleEvidenceSubmit}
+                  disabled={isSubmittingEvidence}
+                  className="sc-btn-primary w-full py-3 mt-3 flex items-center justify-center gap-2 text-xs font-black uppercase tracking-wider"
+                >
+                  {isSubmittingEvidence ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Uploading...</>
+                  ) : (
+                    'Submit Verification Scan'
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -1,13 +1,46 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable react-hooks/set-state-in-effect */
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
+import dynamic from 'next/dynamic';
 import {
-  Check, X, RefreshCw, LogOut, Shield, Leaf, Loader2,
-  AlertCircle, Eye, Inbox, FileText, CheckCircle2, MessageSquare, AlertTriangle
+  Check, X, RefreshCw, LogOut, Shield, Loader2,
+  AlertCircle, Eye, Inbox, FileText, CheckCircle2, MessageSquare, AlertTriangle,
+  Flame, Users, BarChart2, Map
 } from 'lucide-react';
 import { supabaseBrowserClient } from '@/lib/supabase/client';
+import { BackgroundMesh } from '@/features/shared/components/BackgroundMesh';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  PieChart,
+  Pie,
+  Cell,
+  Legend
+} from 'recharts';
 
+// Dynamically import map component to ensure server side building passes correctly without window issues
+const HotspotMap = dynamic(
+  () => import('./HotspotMap'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-[300px] bg-white/[0.01] border border-white/[0.04] rounded-3xl flex flex-col items-center justify-center gap-3 text-charcoal-400">
+        <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+        <span className="text-3xs uppercase font-extrabold tracking-widest">Initializing Map Canvas...</span>
+      </div>
+    )
+  }
+);
+
+// ── Types ─────────────────────────────────────────────────────────────────
 interface EvidenceRecord {
   id: string;
   evidence_type: 'RESIDENT_BEFORE' | 'COLLECTOR_AFTER';
@@ -53,32 +86,37 @@ interface HotspotItem {
   reviewStatus: 'open' | 'confirmed' | 'rejected';
 }
 
+type TabId = 'verification' | 'hotspots' | 'campaigns' | 'analytics';
+
 export const MunicipalityDashboard: React.FC = () => {
   const router = useRouter();
 
-  // User states
+  // ── User States ─────────────────────────────────────────────────────────
   const [profile, setProfile] = useState<{ name: string; email: string } | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
 
-  // Tab State
-  const [activeTab, setActiveTab] = useState<'verification' | 'hotspots' | 'campaigns'>('verification');
+  // ── Tab State ───────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<TabId>('verification');
 
-  // Data states (verification requests)
+  // ── Data States ─────────────────────────────────────────────────────────
   const [requests, setRequests] = useState<CollectionRequestItem[]>([]);
   const [loadingRequests, setLoadingRequests] = useState(true);
   const [requestsError, setRequestsError] = useState<string | null>(null);
 
-  // Data states (hotspots)
   const [hotspots, setHotspots] = useState<HotspotItem[]>([]);
   const [loadingHotspots, setLoadingHotspots] = useState(false);
   const [hotspotsError, setHotspotsError] = useState<string | null>(null);
+  const [hotspotViewMode, setHotspotViewMode] = useState<'list' | 'map'>('map');
 
-  // Data states (campaigns)
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
   const [campaignsError, setCampaignsError] = useState<string | null>(null);
 
-  // Modal / Action states
+  const [requestsStats, setRequestsStats] = useState<any[]>([]);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  // ── Modals & Actions States ─────────────────────────────────────────────
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [activeActionReqId, setActiveActionReqId] = useState<string | null>(null);
   const [actionDecision, setActionDecision] = useState<'verified' | 'rejected' | null>(null);
@@ -88,64 +126,11 @@ export const MunicipalityDashboard: React.FC = () => {
   const [confirmingHotspotId, setConfirmingHotspotId] = useState<string | null>(null);
   const [rejectingHotspotId, setRejectingHotspotId] = useState<string | null>(null);
 
-  // 1. Authenticate user and fetch profile details
-  useEffect(() => {
-    let active = true;
-
-    const checkAuth = async () => {
-      setLoadingProfile(true);
-      try {
-        const { data: { session } } = await supabaseBrowserClient.auth.getSession();
-        if (!session) {
-          router.push('/auth/login');
-          return;
-        }
-
-        const { data: userData, error: userError } = await supabaseBrowserClient
-          .from('users')
-          .select('name, email, role')
-          .eq('id', session.user.id)
-          .single();
-
-        if (userError || !userData) {
-          throw new Error('Could not retrieve profile information.');
-        }
-
-        if (userData.role !== 'municipality') {
-          console.warn('Redirecting unauthorized user role:', userData.role);
-          if (userData.role === 'collector') {
-            router.push('/collector');
-          } else {
-            router.push('/resident');
-          }
-          return;
-        }
-
-        if (active) {
-          setProfile({ name: userData.name, email: userData.email });
-        }
-      } catch (err) {
-        console.error('[MunicipalityAuthError]:', err);
-        router.push('/auth/login');
-      } finally {
-        if (active) {
-          setLoadingProfile(false);
-        }
-      }
-    };
-
-    checkAuth();
-    return () => {
-      active = false;
-    };
-  }, [router]);
-
-  // 2. Fetch pending collected requests
+  // ── Fetch Operations ────────────────────────────────────────────────────
   const fetchCollectedRequests = async () => {
     setLoadingRequests(true);
     setRequestsError(null);
     try {
-      // Fetch COLLECTED requests
       const { data: reqs, error: reqError } = await supabaseBrowserClient
         .from('collection_requests')
         .select(`
@@ -159,86 +144,69 @@ export const MunicipalityDashboard: React.FC = () => {
         .eq('status', 'COLLECTED')
         .order('completed_at', { ascending: false });
 
-      if (reqError) {
-        throw new Error(`Failed to load requests: ${reqError.message}`);
-      }
+      if (reqError) throw reqError;
 
-      if (!reqs || reqs.length === 0) {
-        setRequests([]);
-        return;
-      }
-
-      // Fetch evidence records for these requests
-      const requestIds = reqs.map(r => r.id);
-      const { data: evidence, error: evError } = await supabaseBrowserClient
-        .from('evidence')
-        .select(`
-          id,
-          collection_request_id,
-          evidence_type,
-          image_url,
-          verification_status,
-          latitude,
-          longitude,
-          verification_results (
+      const formatted = await Promise.all((reqs || []).map(async (r: any) => {
+        const { data: evidence } = await supabaseBrowserClient
+          .from('evidence')
+          .select(`
             id,
-            decision,
-            confidence_score,
-            analysis,
-            verified_at,
-            gps_distance,
-            gps_decision
-          )
-        `)
-        .in('collection_request_id', requestIds);
+            evidence_type,
+            image_url,
+            verification_status,
+            latitude,
+            longitude,
+            verification_results (
+              id,
+              decision,
+              confidence_score,
+              analysis,
+              verified_at,
+              gps_distance,
+              gps_decision
+            )
+          `)
+          .eq('collection_request_id', r.id);
 
-      if (evError) {
-        throw new Error(`Failed to load evidence: ${evError.message}`);
-      }
-
-      // Map evidence to requests
-      const requestsWithEvidence: CollectionRequestItem[] = reqs.map((req: any) => {
-        const reqEvidence = evidence?.filter(e => e.collection_request_id === req.id) || [];
-        const beforeEvidence = reqEvidence.find(e => e.evidence_type === 'RESIDENT_BEFORE');
-        const afterEvidence = reqEvidence.find(e => e.evidence_type === 'COLLECTOR_AFTER');
+        const before = evidence?.find(e => e.evidence_type === 'RESIDENT_BEFORE');
+        const after = evidence?.find(e => e.evidence_type === 'COLLECTOR_AFTER');
 
         return {
-          id: req.id,
-          status: req.status,
-          requested_at: req.requested_at,
-          completed_at: req.completed_at,
-          resident: req.resident ? { id: req.resident.id, name: req.resident.name } : null,
-          collector: req.collector ? { id: req.collector.id, name: req.collector.name } : null,
-          beforeEvidence: beforeEvidence ? {
-            id: beforeEvidence.id,
-            evidence_type: 'RESIDENT_BEFORE',
-            image_url: beforeEvidence.image_url,
-            verification_status: beforeEvidence.verification_status as any,
-            latitude: beforeEvidence.latitude,
-            longitude: beforeEvidence.longitude,
-            verification_results: beforeEvidence.verification_results as any
+          id: r.id,
+          status: r.status,
+          requested_at: r.requested_at,
+          completed_at: r.completed_at,
+          resident: r.resident ? { id: r.resident.id, name: r.resident.name } : null,
+          collector: r.collector ? { id: r.collector.id, name: r.collector.name } : null,
+          beforeEvidence: before ? {
+            id: before.id,
+            evidence_type: before.evidence_type as any,
+            image_url: before.image_url,
+            verification_status: before.verification_status as any,
+            latitude: before.latitude,
+            longitude: before.longitude,
+            verification_results: before.verification_results as any
           } : undefined,
-          afterEvidence: afterEvidence ? {
-            id: afterEvidence.id,
-            evidence_type: 'COLLECTOR_AFTER',
-            image_url: afterEvidence.image_url,
-            verification_status: afterEvidence.verification_status as any,
-            latitude: afterEvidence.latitude,
-            longitude: afterEvidence.longitude,
-            verification_results: afterEvidence.verification_results as any
+          afterEvidence: after ? {
+            id: after.id,
+            evidence_type: after.evidence_type as any,
+            image_url: after.image_url,
+            verification_status: after.verification_status as any,
+            latitude: after.latitude,
+            longitude: after.longitude,
+            verification_results: after.verification_results as any
           } : undefined
         };
-      });
+      }));
 
-      setRequests(requestsWithEvidence);
+      setRequests(formatted);
     } catch (err: any) {
-      setRequestsError(err.message || 'An error occurred while loading requests.');
+      setRequestsError(err.message || 'Failed to fetch pending requests.');
     } finally {
       setLoadingRequests(false);
     }
   };
 
-  // 3. Fetch active open-dumping hotspots
   const fetchHotspots = async () => {
     setLoadingHotspots(true);
     setHotspotsError(null);
@@ -247,14 +215,10 @@ export const MunicipalityDashboard: React.FC = () => {
       if (!session) return;
 
       const res = await fetch('/api/dumping-reports/hotspots', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
       const result = await res.json();
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to fetch hotspots.');
-      }
+      if (!res.ok || !result.success) throw new Error(result.error?.message || 'Failed to fetch hotspots.');
       setHotspots(result.data || []);
     } catch (err: any) {
       setHotspotsError(err.message || 'An error occurred loading hotspots.');
@@ -271,9 +235,7 @@ export const MunicipalityDashboard: React.FC = () => {
       if (!session) return;
 
       const res = await fetch('/api/municipality/campaigns', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
       const result = await res.json();
       if (res.ok && result.success) {
@@ -288,26 +250,83 @@ export const MunicipalityDashboard: React.FC = () => {
     }
   };
 
-  // Effect to load data based on active tab
+  const fetchStats = async () => {
+    setLoadingStats(true);
+    setStatsError(null);
+    try {
+      const { data: stats, error: statsErr } = await supabaseBrowserClient
+        .from('collection_requests')
+        .select('status, requested_at');
+
+      if (statsErr) throw statsErr;
+      setRequestsStats(stats || []);
+    } catch (err: any) {
+      setStatsError(err.message || 'Failed to load statistics.');
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  const getOutcomeBreakdownData = () => {
+    const counts = {
+      VERIFIED: 0,
+      REJECTED: 0,
+      COLLECTED: 0,
+      ASSIGNED: 0,
+      PENDING: 0
+    };
+    requestsStats.forEach(r => {
+      if (counts[r.status as keyof typeof counts] !== undefined) {
+        counts[r.status as keyof typeof counts]++;
+      }
+    });
+    return [
+      { name: 'Verified', value: counts.VERIFIED, color: '#4ADE80' },
+      { name: 'Rejected', value: counts.REJECTED, color: '#FB7185' },
+      { name: 'Under Scan', value: counts.COLLECTED, color: '#38BDF8' },
+      { name: 'Assigned', value: counts.ASSIGNED, color: '#818CF8' },
+      { name: 'Pending', value: counts.PENDING, color: '#FCD34D' }
+    ].filter(d => d.value > 0);
+  };
+
+  const getRequestsOverTimeData = () => {
+    const days = Array.from({ length: 7 }).map((_, idx) => {
+      const d = new Date();
+      d.setDate(d.getDate() - idx);
+      return d.toISOString().split('T')[0];
+    }).reverse();
+
+    const counts: Record<string, number> = {};
+    days.forEach(day => { counts[day] = 0; });
+
+    requestsStats.forEach(r => {
+      if (!r.requested_at) return;
+      const day = r.requested_at.split('T')[0];
+      if (counts[day] !== undefined) {
+        counts[day]++;
+      }
+    });
+
+    return days.map(day => ({
+      date: new Date(day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      Requests: counts[day]
+    }));
+  };
+
   useEffect(() => {
     if (profile) {
-      if (activeTab === 'verification') {
-        fetchCollectedRequests();
-      } else if (activeTab === 'hotspots') {
-        fetchHotspots();
-      } else if (activeTab === 'campaigns') {
-        fetchCampaigns();
-      }
+      fetchCollectedRequests();
+      fetchHotspots();
+      fetchCampaigns();
+      fetchStats();
     }
-  }, [profile, activeTab]);
+  }, [profile]);
 
-  // 4. Handle Sign Out
   const handleSignOut = async () => {
     await supabaseBrowserClient.auth.signOut();
     router.push('/auth/login');
   };
 
-  // 5. Submit manual verification decision
   const handleVerificationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeActionReqId || !actionDecision) return;
@@ -333,23 +352,19 @@ export const MunicipalityDashboard: React.FC = () => {
       });
 
       const result = await res.json();
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Verification submission failed.');
-      }
+      if (!res.ok || !result.success) throw new Error(result.error?.message || 'Verification submission failed.');
 
-      // Close modal and refresh list
       setActiveActionReqId(null);
       setActionDecision(null);
       setNotes('');
-      fetchCollectedRequests();
+      await fetchCollectedRequests();
     } catch (err: any) {
-      setActionError(err.message || 'Verification action failed.');
+      setActionError(err.message || 'Verification update error.');
     } finally {
       setActionLoading(false);
     }
   };
 
-  // 6. Handle Confirming Dumping Hotspot
   const handleConfirmDumping = async (hotspotId: string) => {
     if (confirmingHotspotId) return;
     setConfirmingHotspotId(hotspotId);
@@ -367,11 +382,7 @@ export const MunicipalityDashboard: React.FC = () => {
       });
 
       const result = await res.json();
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to confirm hotspot.');
-      }
-
-      // Refresh list to update UI
+      if (!res.ok || !result.success) throw new Error(result.error?.message || 'Failed to confirm hotspot.');
       await fetchHotspots();
     } catch (err: any) {
       alert(err.message || 'An error occurred during confirmation.');
@@ -380,7 +391,6 @@ export const MunicipalityDashboard: React.FC = () => {
     }
   };
 
-  // 7. Handle Rejecting Dumping Hotspot
   const handleRejectDumping = async (hotspotId: string) => {
     if (rejectingHotspotId) return;
     setRejectingHotspotId(hotspotId);
@@ -398,11 +408,7 @@ export const MunicipalityDashboard: React.FC = () => {
       });
 
       const result = await res.json();
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to reject hotspot.');
-      }
-
-      // Refresh list to update UI
+      if (!res.ok || !result.success) throw new Error(result.error?.message || 'Failed to reject hotspot.');
       await fetchHotspots();
     } catch (err: any) {
       alert(err.message || 'An error occurred during rejection.');
@@ -411,31 +417,77 @@ export const MunicipalityDashboard: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    let active = true;
+    const checkAuth = async () => {
+      setLoadingProfile(true);
+      try {
+        const { data: { session } } = await supabaseBrowserClient.auth.getSession();
+        if (!session) {
+          router.push('/auth/login');
+          return;
+        }
+
+        const { data: userData, error: userError } = await supabaseBrowserClient
+          .from('users')
+          .select('name, email, role')
+          .eq('id', session.user.id)
+          .single();
+
+        if (userError || !userData) throw new Error('Could not retrieve profile information.');
+
+        if (userData.role !== 'municipality') {
+          console.warn('Redirecting unauthorized user role:', userData.role);
+          if (userData.role === 'collector') {
+            router.push('/collector');
+          } else {
+            router.push('/resident');
+          }
+          return;
+        }
+
+        if (active) setProfile({ name: userData.name, email: userData.email });
+      } catch (err) {
+        console.error('[MunicipalityAuthError]:', err);
+        router.push('/auth/login');
+      } finally {
+        if (active) setLoadingProfile(false);
+      }
+    };
+
+    checkAuth();
+    return () => { active = false; };
+  }, [router]);
+
   if (loadingProfile) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <div className="min-h-screen flex items-center justify-center bg-[#14171A] text-white">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
-          <p className="text-sm font-medium text-slate-500">Checking credentials...</p>
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+          <p className="text-xs text-charcoal-400 font-bold uppercase tracking-wider">Loading Administration...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans antialiased text-slate-900 dark:text-slate-100 pb-16">
-      {/* Navbar Header */}
-      <header className="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+    <div className="min-h-screen bg-[#14171A] text-[#F0F2F5] pb-16 relative overflow-hidden" style={{ fontFamily: 'var(--font-geist-sans)' }}>
+      {/* Aurora mesh background layer */}
+      <BackgroundMesh role="municipality" />
+
+      {/* Header */}
+      <header className="sticky top-0 z-30 bg-[#14171A]/90 backdrop-blur-md border-b border-white/[0.07] relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-indigo-400 flex items-center justify-center shadow-md shadow-indigo-500/20 ring-1 ring-indigo-500/10">
+            <div className="h-10 w-10 rounded-xl bg-indigo-600 flex items-center justify-center shadow-lg"
+              style={{ boxShadow: '0 4px 14px rgba(99,102,241,0.3)' }}>
               <Shield className="w-5.5 h-5.5 text-white" />
             </div>
             <div>
-              <span className="text-lg font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-200 bg-clip-text text-transparent">
+              <span className="font-display text-lg font-bold text-white">
                 EcoClean Hub
               </span>
-              <span className="ml-2 text-2xs font-extrabold px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 uppercase tracking-widest border border-indigo-500/10">
+              <span className="sc-pill sc-pill-assigned ml-2" style={{ fontSize: '0.5rem' }}>
                 Municipality
               </span>
             </div>
@@ -443,612 +495,389 @@ export const MunicipalityDashboard: React.FC = () => {
 
           <div className="flex items-center gap-4">
             <div className="hidden md:flex flex-col text-right">
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{profile?.name}</span>
-              <span className="text-3xs text-slate-400 dark:text-slate-500">{profile?.email}</span>
+              <span className="text-xs font-semibold text-charcoal-100">{profile?.name}</span>
+              <span className="text-3xs text-charcoal-500 font-mono">{profile?.email}</span>
             </div>
             <button
               onClick={handleSignOut}
-              className="flex items-center justify-center gap-1.5 py-2 px-3.5 border border-slate-200 dark:border-slate-800 hover:border-rose-500/30 hover:bg-rose-500/5 text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-455 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+              className="sc-btn-rose"
+              style={{ padding: '0.45rem 0.85rem', fontSize: '0.75rem' }}
             >
-              <LogOut className="w-4 h-4" />
+              <LogOut className="w-3.5 h-3.5" />
               Sign Out
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Dashboard Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-10">
-        {/* Banner Title */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-          <div>
-            <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-855 dark:from-white dark:to-slate-250 bg-clip-text text-transparent">
-              {activeTab === 'verification' ? 'Manual Verification Dashboard' : activeTab === 'hotspots' ? 'Open Dumping Intelligence' : 'Community Campaigns Monitor'}
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              {activeTab === 'verification'
-                ? 'Review collected requests that triggered automated safety flags or require final approvals.'
-                : activeTab === 'hotspots'
-                ? 'Aggregated reports of active illegal dumping hotspots clustered across community areas.'
-                : 'Monitor environmental cleanliness drives launched and completed by community residents.'}
-            </p>
-          </div>
-          <button
-            onClick={activeTab === 'verification' ? fetchCollectedRequests : activeTab === 'hotspots' ? fetchHotspots : fetchCampaigns}
-            disabled={activeTab === 'verification' ? loadingRequests : activeTab === 'hotspots' ? loadingHotspots : loadingCampaigns}
-            className="flex items-center justify-center gap-1.5 py-2 px-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/80 rounded-xl text-xs font-bold shadow-sm active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${(activeTab === 'verification' ? loadingRequests : activeTab === 'hotspots' ? loadingHotspots : loadingCampaigns) ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
+      {/* Main Container structured as Bento Grid */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 relative z-10">
+        <div className="grid grid-cols-12 gap-6">
 
-        {/* Tab Selection Row */}
-        <div className="flex border-b border-slate-200 dark:border-slate-800 mb-8 gap-2">
-          <button
-            onClick={() => setActiveTab('verification')}
-            className={`py-3 px-4 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'verification'
-                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                : 'border-transparent text-slate-450 dark:text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            Awaiting Verification ({requests.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('hotspots')}
-            className={`py-3 px-4 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'hotspots'
-                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                : 'border-transparent text-slate-450 dark:text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            Dumping Hotspots ({hotspots.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('campaigns')}
-            className={`py-3 px-4 text-xs font-extrabold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'campaigns'
-                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
-                : 'border-transparent text-slate-450 dark:text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            Community Campaigns ({campaigns.length})
-          </button>
-        </div>
-
-        {/* Tab content 1: Manual review requests */}
-        {activeTab === 'verification' && (
-          <>
-            {requestsError && (
-              <div className="rounded-2xl bg-rose-50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 p-4 flex gap-3 text-rose-700 dark:text-rose-300 max-w-2xl mb-6">
-                <AlertCircle className="w-5.5 h-5.5 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-sm">Failed to load manual review list</p>
-                  <p className="text-xs mt-1 opacity-90">{requestsError}</p>
-                </div>
+          {/* 1. LARGE BENTO TILE: Verification Review Queue (FROSTED GLASS CONTAINER) (col-span-12 lg:col-span-8) */}
+          <div className="col-span-12 lg:col-span-8 sc-glass sc-shadow-stack p-6 rounded-3xl flex flex-col space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-white/[0.05]">
+              <div>
+                <h2 className="font-display text-base font-extrabold text-white flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-indigo-400" />
+                  Manual Verification queue
+                </h2>
+                <p className="text-3xs text-charcoal-400 mt-0.5">Strict, high-density listing of collected requests awaiting confirmation</p>
               </div>
-            )}
 
-            {loadingRequests ? (
-              <div className="py-16 flex flex-col items-center justify-center gap-3">
-                <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-                <p className="text-xs text-slate-400 dark:text-slate-500 font-semibold uppercase tracking-wider">Retrieving pending tickets...</p>
+              {/* Tab control inside Bento grid */}
+              <div className="flex gap-1.5 bg-white/5 p-1 rounded-xl border border-white/[0.04]">
+                <button
+                  onClick={() => setActiveTab('verification')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all ${activeTab === 'verification' ? 'bg-indigo-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
+                >
+                  Verification Queue ({requests.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('campaigns')}
+                  className={`text-[10px] font-extrabold px-3 py-1.5 rounded-lg transition-all ${activeTab === 'campaigns' ? 'bg-indigo-600 text-white shadow-sm' : 'text-charcoal-400 hover:text-charcoal-200'}`}
+                >
+                  Campaigns Registry
+                </button>
               </div>
-            ) : requests.length === 0 ? (
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center max-w-lg mx-auto shadow-sm">
-                <div className="h-12 w-12 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 mx-auto mb-4">
-                  <Inbox className="w-6 h-6" />
-                </div>
-                <h3 className="text-lg font-bold">All caught up!</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-                  There are currently no collection requests flagged or awaiting manual verification.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {requests.map((req) => {
-                  const geminiRes = req.afterEvidence?.verification_results?.[0];
-                  const score = geminiRes?.confidence_score ?? 0;
-                  const gpsDec = geminiRes?.gps_decision;
-                  const gpsDist = geminiRes?.gps_distance;
+            </div>
 
-                  return (
-                    <div
-                      key={req.id}
-                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-sm hover:shadow-md transition-all p-6 flex flex-col lg:flex-row gap-8 items-stretch"
-                    >
-                      {/* Left Metadata Column */}
-                      <div className="flex-1 min-w-[240px] flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xs font-extrabold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 tracking-wider">
-                              COLLECTED
-                            </span>
-                            <span className="text-3xs text-slate-400 dark:text-slate-500">ID: {req.id}</span>
-                          </div>
+            {/* List block */}
+            <div className="flex-1 overflow-y-auto max-h-[500px] pr-1 space-y-3.5">
+              {activeTab === 'verification' && (
+                <>
+                  {requestsError && (
+                    <div className="rounded-2xl bg-rose-500/10 border border-rose-500/20 p-4 text-rose-300">
+                      <AlertCircle className="w-5 h-5 shrink-0 inline mr-2" />
+                      <span>{requestsError}</span>
+                    </div>
+                  )}
 
-                          <div className="mt-4 space-y-2.5">
-                            <div>
-                              <p className="text-2xs text-slate-400 dark:text-slate-500 uppercase tracking-widest font-extrabold">Resident</p>
-                              <p className="text-xs font-semibold mt-0.5">{req.resident?.name || 'Unknown'}</p>
-                            </div>
-                            <div>
-                              <p className="text-2xs text-slate-400 dark:text-slate-500 uppercase tracking-widest font-extrabold">Collector Assigned</p>
-                              <p className="text-xs font-semibold mt-0.5">{req.collector?.name || 'Unassigned'}</p>
-                            </div>
-                          </div>
-                        </div>
+                  {loadingRequests ? (
+                    <div className="py-20 flex flex-col items-center justify-center text-charcoal-550">
+                      <Loader2 className="w-8 h-8 animate-spin text-indigo-500 mb-2" />
+                      <span className="text-3xs uppercase tracking-widest font-black">Retrieving queue...</span>
+                    </div>
+                  ) : requests.length === 0 ? (
+                    <div className="sc-empty py-20 text-center text-charcoal-500 bg-white/[0.01] border border-white/[0.04] rounded-3xl">
+                      <Inbox className="w-10 h-10 mx-auto text-charcoal-600 mb-3" />
+                      <p className="text-xs font-semibold text-white">All clean!</p>
+                      <p className="text-2xs mt-1">There are no collection tickets awaiting manual review.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {requests.map((req) => {
+                        const beforeEv = req.beforeEvidence;
+                        const afterEv = req.afterEvidence;
+                        const geminiRes = afterEv?.verification_results ? (
+                          Array.isArray(afterEv.verification_results)
+                            ? afterEv.verification_results[0]
+                            : afterEv.verification_results
+                        ) : null;
 
-                        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/80 text-3xs text-slate-400 dark:text-slate-500 space-y-1">
-                          <p>Requested: {new Date(req.requested_at).toLocaleString()}</p>
-                          {req.completed_at && <p>Completed: {new Date(req.completed_at).toLocaleString()}</p>}
-                        </div>
-                      </div>
+                        const score = geminiRes?.confidence_score ?? 0;
+                        const gpsDist = geminiRes?.gps_distance;
+                        const gpsDec = geminiRes?.gps_decision;
 
-                      {/* Middle Images Column */}
-                      <div className="flex flex-row sm:flex-row gap-4 items-center">
-                        {/* BEFORE Image */}
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-3xs font-extrabold text-slate-450 uppercase tracking-wider text-center">BEFORE Evidence</span>
-                          {req.beforeEvidence?.image_url ? (
-                            <div
-                              className="relative h-28 w-28 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 group cursor-pointer"
-                              onClick={() => setSelectedImage(req.beforeEvidence?.image_url || null)}
-                            >
-                              <img
-                                src={req.beforeEvidence.image_url}
-                                alt="Before waste evidence"
-                                className="h-full w-full object-cover group-hover:scale-105 transition-transform"
-                              />
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
-                                <Eye className="w-5 h-5 text-white" />
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="h-28 w-28 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center text-slate-350 bg-slate-50 dark:bg-slate-900/30">
-                              <FileText className="w-6 h-6" />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* AFTER Image */}
-                        <div className="flex flex-col gap-1.5">
-                          <span className="text-3xs font-extrabold text-slate-450 uppercase tracking-wider text-center">AFTER Evidence</span>
-                          {req.afterEvidence?.image_url ? (
-                            <div
-                              className="relative h-28 w-28 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 group cursor-pointer"
-                              onClick={() => setSelectedImage(req.afterEvidence?.image_url || null)}
-                            >
-                              <img
-                                src={req.afterEvidence.image_url}
-                                alt="After collection evidence"
-                                className="h-full w-full object-cover group-hover:scale-105 transition-transform"
-                              />
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
-                                <Eye className="w-5 h-5 text-white" />
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="h-28 w-28 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center text-slate-350 bg-slate-50 dark:bg-slate-900/30">
-                              <FileText className="w-6 h-6" />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Right Gemini & GPS Assessment Column */}
-                      <div className="flex-1.5 min-w-[300px] bg-slate-50 dark:bg-slate-900/40 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-2xs font-bold text-slate-450 uppercase tracking-wider">Automated Verification Signals</span>
-
-                            {/* Status Badge */}
-                            {geminiRes ? (
-                              <span className={`text-3xs font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
-                                geminiRes.decision === 'verified'
-                                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/10'
-                                  : geminiRes.decision === 'rejected'
-                                  ? 'bg-rose-500/10 text-rose-600 dark:text-rose-455 border-rose-500/10'
-                                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-450 border-amber-500/10'
-                              }`}>
-                                {geminiRes.decision}
-                              </span>
-                            ) : (
-                              <span className="text-3xs font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 dark:border-slate-800 uppercase tracking-wider">
-                                No Scan
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Confidence Indicator */}
-                          {geminiRes && (
-                            <div className="mt-3.5 flex items-center gap-3">
-                              <div className="flex-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full ${
-                                    score >= 70 ? 'bg-emerald-500' : score >= 40 ? 'bg-amber-500' : 'bg-rose-500'
-                                  }`}
-                                  style={{ width: `${score}%` }}
-                                />
-                              </div>
-                              <span className="text-2xs font-extrabold text-slate-655 dark:text-slate-400">{score}% Conf.</span>
-                            </div>
-                          )}
-
-                          {/* GPS Proximity Check */}
-                          {gpsDec && (
-                            <div className="mt-3.5 pt-3 border-t border-slate-200/50 dark:border-slate-800/80 flex flex-col gap-2">
-                              <div className="flex items-center justify-between text-3xs">
-                                <span className="font-extrabold text-slate-450 dark:text-slate-500 uppercase tracking-wider">GPS Verification</span>
-                                <span className={`font-black uppercase px-2 py-0.5 rounded text-3xs ${
-                                  gpsDec === 'MATCH'
-                                    ? 'text-emerald-600 bg-emerald-500/10 dark:text-emerald-400'
-                                    : gpsDec === 'NEAR'
-                                    ? 'text-yellow-600 bg-yellow-500/10 dark:text-yellow-450'
-                                    : gpsDec === 'MISMATCH'
-                                    ? 'text-rose-600 bg-rose-500/10 dark:text-rose-455 border border-rose-500/10'
-                                    : 'text-slate-500 bg-slate-100 dark:bg-slate-800'
-                                }`}>
-                                  {gpsDec === 'MISMATCH' && <AlertTriangle className="w-3 h-3 inline mr-1 animate-bounce" />}
-                                  {gpsDec}
+                        return (
+                          <div
+                            key={req.id}
+                            className="bg-black/20 p-5 rounded-2xl border border-white/[0.04] space-y-4"
+                          >
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                              <div>
+                                <span className="font-mono text-3xs text-charcoal-500 block">TICKET ID: {req.id}</span>
+                                <span className="text-xs font-bold text-white block mt-0.5">
+                                  Resident: {req.resident?.name || 'Unknown'} · Collector: {req.collector?.name || 'Unassigned'}
                                 </span>
                               </div>
-                              {gpsDist !== undefined && gpsDist !== null && (
-                                <div className="flex justify-between text-3xs text-slate-500 dark:text-slate-455">
-                                  <span>Before vs After Distance:</span>
-                                  <span className="font-bold">{gpsDist.toFixed(1)} meters</span>
+                              <span className="text-3xs text-charcoal-400 font-mono">
+                                Submitted: {new Date(req.completed_at || req.requested_at).toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* Before/After comparisons */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <span className="text-3xs text-charcoal-500 uppercase tracking-wider block font-bold mb-1.5">Before (Resident Evidence)</span>
+                                {beforeEv?.image_url ? (
+                                  <div
+                                    className="relative aspect-video rounded-xl overflow-hidden cursor-pointer bg-black border border-white/[0.04]"
+                                    onClick={() => setSelectedImage(beforeEv.image_url)}
+                                  >
+                                    <Image
+                                      src={beforeEv.image_url}
+                                      alt="Resident Before photo"
+                                      fill
+                                      sizes="200px"
+                                      className="object-cover"
+                                      unoptimized
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="aspect-video bg-white/[0.02] border border-white/[0.04] rounded-xl flex items-center justify-center text-charcoal-600 text-3xs">
+                                    No Image Provided
+                                  </div>
+                                )}
+                              </div>
+
+                              <div>
+                                <span className="text-3xs text-charcoal-500 uppercase tracking-wider block font-bold mb-1.5">After (Collector Evidence)</span>
+                                {afterEv?.image_url ? (
+                                  <div
+                                    className="relative aspect-video rounded-xl overflow-hidden cursor-pointer bg-black border border-white/[0.04]"
+                                    onClick={() => setSelectedImage(afterEv.image_url)}
+                                  >
+                                    <Image
+                                      src={afterEv.image_url}
+                                      alt="Collector After photo"
+                                      fill
+                                      sizes="200px"
+                                      className="object-cover"
+                                      unoptimized
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="aspect-video bg-white/[0.02] border border-white/[0.04] rounded-xl flex items-center justify-center text-charcoal-600 text-3xs">
+                                    No Image Provided
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Verification outcome stats */}
+                            <div className="bg-black/35 p-3 rounded-xl border border-white/[0.03] space-y-2">
+                              {geminiRes && (
+                                <div className="flex justify-between items-center text-3xs">
+                                  <span className="font-extrabold text-charcoal-450 uppercase tracking-wider">Gemini Scan Confidence</span>
+                                  <span className={`sc-pill font-black text-[9px] ${
+                                    score >= 80 ? 'bg-forest-500/10 text-forest-400 border border-forest-500/20' : score >= 60 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  }`}>
+                                    {score}% Confidence
+                                  </span>
                                 </div>
                               )}
-                              {/* Exact coordinates for municipality admins */}
-                              <div className="mt-1 bg-slate-100 dark:bg-slate-950 p-2 rounded-xl text-3xs font-mono text-slate-500 dark:text-slate-400 flex flex-col gap-0.5 border border-slate-200/40 dark:border-slate-800/60">
-                                <div>Resident: {req.beforeEvidence?.latitude?.toFixed(5) || 'N/A'}, {req.beforeEvidence?.longitude?.toFixed(5) || 'N/A'}</div>
-                                <div>Collector: {req.afterEvidence?.latitude?.toFixed(5) || 'N/A'}, {req.afterEvidence?.longitude?.toFixed(5) || 'N/A'}</div>
-                              </div>
+                              {gpsDec && (
+                                <div className="flex justify-between items-center text-3xs pt-1 border-t border-white/[0.03]">
+                                  <span className="font-extrabold text-charcoal-450 uppercase tracking-wider">GPS Delta Proximity</span>
+                                  <span className="font-bold text-white">
+                                    {gpsDec} ({gpsDist?.toFixed(1) || '0'}m)
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                          )}
 
-                          {/* Assessment details */}
-                          <p className="text-2xs leading-relaxed text-slate-500 dark:text-slate-455 mt-4 italic bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 rounded-xl p-3">
-                            {geminiRes?.analysis || 'No automated assessment analysis was generated.'}
-                          </p>
-                        </div>
-
-                        {/* Actions buttons */}
-                        <div className="flex gap-3 mt-6">
-                          <button
-                            onClick={() => {
-                              setActiveActionReqId(req.id);
-                              setActionDecision('verified');
-                            }}
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-md active:scale-[0.98] transition-all cursor-pointer"
-                          >
-                            <Check className="w-4 h-4" />
-                            Verify Pickup
-                          </button>
-                          <button
-                            onClick={() => {
-                              setActiveActionReqId(req.id);
-                              setActionDecision('rejected');
-                            }}
-                            className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3.5 border border-rose-250 dark:border-rose-800 hover:border-rose-500 hover:bg-rose-500/5 text-rose-700 dark:text-rose-455 hover:text-rose-600 dark:hover:text-rose-450 text-xs font-bold rounded-xl active:scale-[0.98] transition-all cursor-pointer"
-                          >
-                            <X className="w-4 h-4" />
-                            Reject Pickup
-                          </button>
-                        </div>
-                      </div>
+                            {/* Verification action choices */}
+                            <div className="flex gap-2 pt-2">
+                              <button
+                                onClick={() => {
+                                  setActiveActionReqId(req.id);
+                                  setActionDecision('verified');
+                                }}
+                                className="sc-btn-primary flex-1 py-2 text-3xs uppercase font-extrabold"
+                              >
+                                <Check className="w-3.5 h-3.5" /> Approve Pickup
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setActiveActionReqId(req.id);
+                                  setActionDecision('rejected');
+                                }}
+                                className="sc-btn-rose flex-1 py-2 text-3xs uppercase font-extrabold"
+                              >
+                                <X className="w-3.5 h-3.5" /> Reject Cleanup
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </>
-        )}
+                  )}
+                </>
+              )}
 
-        {/* Tab content 2: Aggregated Dumping Hotspots */}
-        {activeTab === 'hotspots' && (
-          <div className="space-y-6">
-            {loadingHotspots ? (
-              <div className="py-16 flex flex-col items-center justify-center gap-3">
-                <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-                <p className="text-xs text-slate-400 dark:text-slate-500 font-semibold uppercase tracking-wider">Loading Hotspot aggregation...</p>
-              </div>
-            ) : hotspotsError ? (
-              <div className="rounded-2xl bg-rose-50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 p-4 flex gap-3 text-rose-700 dark:text-rose-300 max-w-2xl">
-                <AlertCircle className="w-5.5 h-5.5 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-sm">Failed to load hotspots</p>
-                  <p className="text-xs mt-1 opacity-90">{hotspotsError}</p>
-                </div>
-              </div>
-            ) : hotspots.length === 0 ? (
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center max-w-lg mx-auto shadow-sm">
-                <div className="h-12 w-12 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-400 dark:text-slate-500 mx-auto mb-4">
-                  <Inbox className="w-6 h-6" />
-                </div>
-                <h3 className="text-lg font-bold">No active hotspots</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
-                  There are no active illegal dumping reports currently clustered.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {hotspots.map((h) => {
-                  const priorityColors = {
-                    critical: 'bg-red-500/10 text-red-650 dark:text-red-400 border-red-500/20 font-black',
-                    high: 'bg-orange-500/10 text-orange-650 dark:text-orange-400 border-orange-500/20 font-bold',
-                    medium: 'bg-yellow-500/10 text-yellow-650 dark:text-yellow-450 border-yellow-500/20 font-bold',
-                    low: 'bg-slate-550/10 text-slate-600 dark:text-slate-450 border-slate-500/20'
-                  };
+              {activeTab === 'campaigns' && (
+                <div className="space-y-4">
+                  {campaignsError && (
+                    <div className="rounded-2xl bg-rose-500/10 border border-rose-500/20 p-4 text-rose-300">
+                      {campaignsError}
+                    </div>
+                  )}
 
-                  return (
-                    <div
-                      key={h.id}
-                      className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xs overflow-hidden flex flex-col justify-between group"
+                  {loadingCampaigns ? (
+                    <div className="py-16 flex flex-col items-center justify-center">
+                      <Loader2 className="w-7 h-7 text-indigo-500 animate-spin" />
+                      <span className="text-3xs uppercase font-bold text-charcoal-400 mt-2">Loading registry...</span>
+                    </div>
+                  ) : campaigns.length === 0 ? (
+                    <div className="sc-empty py-16 text-center text-charcoal-550">
+                      No campaigns scheduled.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-4">
+                      {campaigns.map((c) => (
+                        <div key={c.id} className="bg-black/20 p-5 rounded-2xl border border-white/[0.04] space-y-3">
+                          <div className="flex justify-between items-start border-b border-white/[0.04] pb-2">
+                            <div>
+                              <span className="sc-pill sc-pill-verified text-[8px]">{c.status.toUpperCase()}</span>
+                              <h3 className="font-display text-sm font-bold text-white mt-1.5">{c.title}</h3>
+                            </div>
+                            <span className="text-3xs font-mono text-charcoal-500">ID: {c.id}</span>
+                          </div>
+                          <p className="text-3xs text-charcoal-400">{c.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 2. MEDIUM BENTO TILE: Hotspots map preview & KPIs (col-span-12 lg:col-span-4) */}
+          <div className="col-span-12 lg:col-span-4 sc-glass sc-shadow-stack p-6 rounded-3xl flex flex-col justify-between space-y-4">
+            <div className="border-b border-white/[0.05] pb-3">
+              <span className="text-[10px] text-indigo-400 font-black uppercase tracking-wider">Live Hotspot Canvas</span>
+              <h3 className="text-sm font-extrabold text-white mt-0.5">Dumping Clustering</h3>
+            </div>
+
+            {/* Dynamic Map Tile */}
+            <div className="h-[300px] rounded-2xl overflow-hidden relative border border-white/[0.05]">
+              <HotspotMap hotspots={hotspots} />
+            </div>
+
+            <div className="bg-black/20 p-3.5 rounded-2xl border border-white/[0.03] flex justify-between items-center text-xs font-bold text-charcoal-400">
+              <span>Active Hotspots Count:</span>
+              <span className="text-rose-400">{hotspots.length} clusters</span>
+            </div>
+          </div>
+
+          {/* 3. CHARTS CONTAINER TILES: Recharts Metrics (col-span-12) */}
+          <div className="col-span-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            {/* Outcome Pie Chart Bento Tile */}
+            <div className="sc-glass sc-shadow-stack p-6 rounded-3xl space-y-4">
+              <div>
+                <h3 className="font-display text-sm font-bold text-white uppercase tracking-wider">Verification Outcomes Ratio</h3>
+                <p className="text-3xs text-charcoal-400 mt-0.5">Overall verification statuses breakdown index</p>
+              </div>
+              <div className="h-64 flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={getOutcomeBreakdownData()}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={80}
+                      paddingAngle={4}
+                      dataKey="value"
                     >
-                      <div>
-                        {/* Hotspot Image */}
-                        <div className="relative aspect-video bg-slate-100 dark:bg-slate-800 overflow-hidden border-b border-slate-100 dark:border-slate-850">
-                          {h.representativeImage ? (
-                            <img
-                              src={h.representativeImage}
-                              alt="Hotspot Representative"
-                              className="h-full w-full object-cover group-hover:scale-[1.02] transition-transform"
-                            />
-                          ) : (
-                            <div className="h-full w-full flex items-center justify-center text-slate-350 dark:text-slate-600 bg-slate-100 dark:bg-slate-900/30">
-                              <FileText className="w-10 h-10 animate-pulse" />
-                            </div>
-                          )}
-                          <div className="absolute top-3 left-3">
-                            <span className={`text-3xs px-2.5 py-1 rounded-full border uppercase tracking-widest flex items-center gap-1 ${priorityColors[h.priority]}`}>
-                              🔥 {h.priority} — {h.priorityPercentage}%
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Details */}
-                        <div className="p-5 space-y-4">
-                          <div>
-                            <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">Community Locality</h4>
-                            <p className="text-sm font-black text-slate-800 dark:text-white mt-1">{h.communityName}</p>
-                          </div>
-
-                          <div className="bg-slate-50 dark:bg-slate-950/20 p-2.5 rounded-xl border border-slate-100 dark:border-slate-800/80">
-                            <div className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300 font-bold">
-                              <span>👥</span>
-                              <span>{h.uniqueReporters} {h.uniqueReporters === 1 ? 'reporter' : 'reporters'}</span>
-                              <span className="text-slate-350 dark:text-slate-700 font-normal">·</span>
-                              <span>{h.totalReports} {h.totalReports === 1 ? 'report' : 'reports'}</span>
-                            </div>
-                          </div>
-
-                          <div className="pt-2">
-                            <h5 className="text-3xs font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Latest Incident Notes</h5>
-                            <p className="text-2xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed italic bg-slate-50 dark:bg-slate-950/40 p-2.5 rounded-xl border border-slate-150/40 dark:border-slate-800/80">
-                              "{h.latestDescription || 'No description provided'}"
-                            </p>
-                          </div>
-
-                          <div className="pt-4 border-t border-slate-100 dark:border-slate-800/60">
-                            {h.reviewStatus === 'confirmed' ? (
-                              <div className="flex flex-col items-center justify-center p-3 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl">
-                                <span className="text-xs font-black text-emerald-600 dark:text-emerald-450 flex items-center gap-1">
-                                  <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Confirmed ✓
-                                </span>
-                                <span className="text-3xs text-emerald-650 dark:text-emerald-400/80 mt-0.5 font-bold">
-                                  {h.uniqueReporters} {h.uniqueReporters === 1 ? 'reporter' : 'reporters'} rewarded · +5 each
-                                </span>
-                              </div>
-                            ) : (
-                              <div className="flex gap-2">
-                                <button
-                                  onClick={() => handleConfirmDumping(h.id)}
-                                  disabled={confirmingHotspotId !== null || rejectingHotspotId !== null}
-                                  className="flex-1 flex items-center justify-center gap-1 py-3 px-2 bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-3xs uppercase tracking-wider rounded-2xl transition-all shadow-sm hover:shadow active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
-                                >
-                                  {confirmingHotspotId === h.id ? (
-                                    <>
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                      Confirming...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Check className="w-3 h-3" />
-                                      Confirm Dumping
-                                    </>
-                                  )}
-                                </button>
-                                <button
-                                  onClick={() => handleRejectDumping(h.id)}
-                                  disabled={confirmingHotspotId !== null || rejectingHotspotId !== null}
-                                  className="flex-1 flex items-center justify-center gap-1 py-3 px-2 bg-rose-500 hover:bg-rose-605 text-white font-extrabold text-3xs uppercase tracking-wider rounded-2xl transition-all shadow-sm hover:shadow active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none"
-                                >
-                                  {rejectingHotspotId === h.id ? (
-                                    <>
-                                      <Loader2 className="w-3 h-3 animate-spin" />
-                                      Rejecting...
-                                    </>
-                                  ) : (
-                                    <>
-                                      <X className="w-3 h-3" />
-                                      Reject Dumping
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="p-5 pt-0 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between text-3xs text-slate-400 dark:text-slate-500 mt-2">
-                        <span>Latest: {new Date(h.latestReportAt).toLocaleString()}</span>
-                        <span>Coords: {h.latitude.toFixed(5)}, {h.longitude.toFixed(5)}</span>
-                      </div>
-                    </div>
-                  );
-                })}
+                      {getOutcomeBreakdownData().map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        background: '#1B1F22',
+                        borderColor: 'rgba(255,255,255,0.08)',
+                        borderRadius: '12px',
+                        color: '#F0F2F5',
+                        fontSize: '11px'
+                      }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      iconSize={10}
+                      formatter={(value) => <span className="text-[11px] text-charcoal-300 font-semibold">{value}</span>}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
-            )}
+            </div>
+
+            {/* Weekly Trend Bar Chart Bento Tile */}
+            <div className="sc-glass sc-shadow-stack p-6 rounded-3xl space-y-4">
+              <div>
+                <h3 className="font-display text-sm font-bold text-white uppercase tracking-wider">Weekly Submission Logs</h3>
+                <p className="text-3xs text-charcoal-400 mt-0.5">Volume log history of daily requests in the last 7 days</p>
+              </div>
+              <div className="h-64 flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={getRequestsOverTimeData()} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                    <XAxis
+                      dataKey="date"
+                      stroke="rgba(255,255,255,0.3)"
+                      fontSize={9}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      stroke="rgba(255,255,255,0.3)"
+                      fontSize={9}
+                      tickLine={false}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        background: '#1B1F22',
+                        borderColor: 'rgba(255,255,255,0.08)',
+                        borderRadius: '12px',
+                        color: '#F0F2F5',
+                        fontSize: '11px'
+                      }}
+                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                    />
+                    <Bar dataKey="Requests" fill="#6366F1" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
           </div>
-        )}
 
-        {/* Tab content 3: Cleanliness Campaigns Monitoring */}
-        {activeTab === 'campaigns' && (
-          <div className="space-y-6">
-            {campaignsError && (
-              <div className="rounded-2xl bg-rose-50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 p-4 flex gap-3 text-rose-700 dark:text-rose-300 max-w-2xl">
-                <AlertCircle className="w-5.5 h-5.5 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold text-sm">Failed to load campaigns list</p>
-                  <p className="text-xs mt-1 opacity-90">{campaignsError}</p>
-                </div>
-              </div>
-            )}
-
-            {loadingCampaigns ? (
-              <div className="flex flex-col items-center justify-center py-16 text-slate-500 gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl">
-                <Loader2 className="w-6 h-6 animate-spin text-indigo-500" />
-                <span className="text-xs">Fetching campaigns registry...</span>
-              </div>
-            ) : campaigns.length === 0 ? (
-              <div className="text-center py-16 text-slate-450 dark:text-slate-500 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl">
-                <p className="text-sm font-black">No cleanliness campaigns found</p>
-                <p className="text-2xs mt-1">Campaigns launched by community members will appear here.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-6">
-                {campaigns.map((c) => {
-                  const statusColors = {
-                    draft: 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-450 border-slate-200 dark:border-slate-750',
-                    published: 'bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-450 border-blue-100 dark:border-blue-900/30',
-                    registration_open: 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-450 border-emerald-100 dark:border-emerald-900/30',
-                    completed: 'bg-indigo-50 dark:bg-indigo-950/20 text-indigo-600 dark:text-indigo-450 border-indigo-100 dark:border-indigo-900/30',
-                    cancelled: 'bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-450 border-rose-100 dark:border-rose-900/30'
-                  };
-
-                  const formattedStatus = c.status.replace('_', ' ').toUpperCase();
-
-                  return (
-                    <div key={c.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-xs space-y-4">
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800/80 pb-4">
-                        <div>
-                          <span className={`text-4xs px-2.5 py-0.5 rounded-full border tracking-widest font-extrabold ${statusColors[c.status as keyof typeof statusColors] || ''}`}>
-                            {formattedStatus}
-                          </span>
-                          <h3 className="text-base font-black text-slate-800 dark:text-white mt-2 leading-snug">{c.title}</h3>
-                          <p className="text-2xs text-slate-500 dark:text-slate-400 mt-1">{c.description}</p>
-                        </div>
-                        <div className="grid grid-cols-3 gap-3 text-center min-w-[240px]">
-                          <div className="bg-slate-50 dark:bg-slate-950/40 p-2 rounded-xl border border-slate-100 dark:border-slate-850">
-                            <span className="text-slate-400 text-4xs font-bold block uppercase">Registered</span>
-                            <span className="text-xs font-black text-slate-800 dark:text-white mt-0.5 block">{c.registeredCount}</span>
-                          </div>
-                          <div className="bg-emerald-500/5 p-2 rounded-xl border border-emerald-500/10">
-                            <span className="text-emerald-500 text-4xs font-bold block uppercase">Attended</span>
-                            <span className="text-xs font-black text-emerald-600 dark:text-emerald-450 mt-0.5 block">{c.attendedCount}</span>
-                          </div>
-                          <div className="bg-rose-500/5 p-2 rounded-xl border border-rose-500/10">
-                            <span className="text-rose-500 text-4xs font-bold block uppercase">Cancelled</span>
-                            <span className="text-xs font-black text-rose-600 dark:text-rose-450 mt-0.5 block">{c.cancelledCount}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2 text-2xs font-semibold text-slate-500 dark:text-slate-400">
-                        <div className="space-y-2">
-                          <div className="flex justify-between">
-                            <span>📅 Date:</span>
-                            <span className="text-slate-800 dark:text-slate-200">{new Date(c.campaignDate).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>⏰ Duration:</span>
-                            <span className="text-slate-800 dark:text-slate-200">{c.startTime.substring(0, 5)} – {c.endTime.substring(0, 5)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>📍 Location:</span>
-                            <span className="text-slate-800 dark:text-slate-200">{c.location}</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="flex justify-between">
-                            <span>🏘️ Locality:</span>
-                            <span className="text-slate-800 dark:text-slate-200">{c.communityName}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>👤 Organizer:</span>
-                            <span className="text-slate-800 dark:text-slate-200 font-bold">{c.organizerName}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>🎯 Target Turnout:</span>
-                            <span className="text-slate-850 dark:text-slate-200">{c.expectedParticipants || '—'}</span>
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-850 rounded-2xl p-4 space-y-2 flex flex-col justify-center">
-                          <div className="flex justify-between text-3xs font-extrabold uppercase text-slate-400">
-                            <span>Organizer Reward:</span>
-                            <span className={c.organizerPointsAwarded > 0 ? 'text-emerald-500' : 'text-slate-500'}>
-                              {c.organizerPointsAwarded > 0 ? '+1,000 pts' : 'Pending completion'}
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-3xs font-extrabold uppercase text-slate-400 mt-2">
-                            <span>Attendee Rewards:</span>
-                            <span className={c.participantPointsDistributed > 0 ? 'text-emerald-500' : 'text-slate-500'}>
-                              {c.participantPointsDistributed > 0 ? `+${c.participantPointsDistributed.toLocaleString()} pts total` : '0 pts'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+        </div>
       </main>
 
       {/* Image Preview Overlay Modal */}
       {selectedImage && (
         <div
-          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 sc-anim-fade-up"
           onClick={() => setSelectedImage(null)}
         >
-          <div className="relative max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl border border-slate-800">
+          <div className="relative max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl border border-white/[0.1] bg-black">
             <button
               className="absolute top-4 right-4 h-8 w-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black transition-colors"
               onClick={() => setSelectedImage(null)}
             >
               <X className="w-4 h-4" />
             </button>
-            <img
+            <Image
               src={selectedImage}
               alt="Expanded preview"
+              width={1024}
+              height={768}
               className="max-w-full max-h-[80vh] object-contain"
+              unoptimized
             />
           </div>
         </div>
       )}
 
-      {/* Verification / Rejection Notes Modal Overlay */}
+      {/* Manual verification feedback Modal */}
       {activeActionReqId && actionDecision && (
-        <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl w-full max-w-md p-6">
-            <h3 className="text-lg font-bold flex items-center gap-2">
-              <MessageSquare className="w-5 h-5 text-indigo-500" />
+        <div className="fixed inset-0 z-40 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="sc-card w-full max-w-md p-6 sc-anim-scale-in">
+            <h3 className="font-display text-lg font-bold flex items-center gap-2 text-white">
+              <MessageSquare className="w-5 h-5 text-indigo-400" />
               Manual Review Assessment
             </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-              Please provide decision justification notes for this ticket.
+            <p className="text-xs text-charcoal-400 mt-2">
+              Provide justification notes for marking this pickup request as <span className="font-bold text-white uppercase">{actionDecision}</span>.
             </p>
 
             <form onSubmit={handleVerificationSubmit} className="mt-5 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1.5">
+                <label className="block text-3xs font-extrabold text-charcoal-450 uppercase mb-1.5">
                   Review Notes
                 </label>
                 <textarea
@@ -1056,15 +885,16 @@ export const MunicipalityDashboard: React.FC = () => {
                   rows={3}
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  placeholder={`Reason for marking this pickup as ${actionDecision}...`}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-250 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-colors text-xs"
+                  placeholder={`Justification explanation for marking this request as ${actionDecision}...`}
+                  className="sc-input text-xs"
+                  style={{ fontSize: '14px' }}
                 />
               </div>
 
               {actionError && (
-                <div className="rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 p-3.5 flex gap-2.5">
-                  <AlertCircle className="w-5 h-5 text-rose-500 flex-shrink-0" />
-                  <span className="text-xs text-rose-700 dark:text-rose-300">{actionError}</span>
+                <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-3.5 flex gap-2.5 text-xs text-rose-300">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{actionError}</span>
                 </div>
               )}
 
@@ -1076,29 +906,19 @@ export const MunicipalityDashboard: React.FC = () => {
                     setActionDecision(null);
                     setNotes('');
                   }}
-                  className="py-2 px-4 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/80 rounded-xl text-xs font-bold cursor-pointer"
+                  className="sc-btn-ghost text-xs"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className={`py-2 px-5 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer ${
-                    actionDecision === 'verified'
-                      ? 'bg-emerald-600 hover:bg-emerald-500'
-                      : 'bg-rose-600 hover:bg-rose-500'
-                  }`}
+                  className="sc-btn-primary text-xs"
                 >
                   {actionLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Submitting...
-                    </>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      Confirm {actionDecision === 'verified' ? 'Verify' : 'Reject'}
-                    </>
+                    'Confirm decision'
                   )}
                 </button>
               </div>
@@ -1109,5 +929,3 @@ export const MunicipalityDashboard: React.FC = () => {
     </div>
   );
 };
-
-export default MunicipalityDashboard;
