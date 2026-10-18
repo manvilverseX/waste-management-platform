@@ -41,7 +41,7 @@ Use ONLY the architecture decisions provided below. Do not invent additional fea
 * OpenStreetMap
 
 ### AI
-* Google Gemini API
+* xAI Grok API
 
 ### Deployment
 * Vercel
@@ -264,14 +264,14 @@ Authentication and authorization are different.
 
 ## AI ARCHITECTURE
 
-The browser must NEVER directly call Gemini.
+The browser must NEVER directly call Grok.
 
 ### Correct flow
 ```
-Browser -> Next.js backend -> Gemini -> verification result -> database
+Browser -> Next.js backend -> Grok -> verification result -> database
 ```
 
-Gemini API keys must remain server-side.
+xAI API keys must remain server-side.
 
 AI analysis must not directly determine business permissions.
 Business rules determine the final application outcome.
@@ -301,7 +301,7 @@ src/
 │
 ├── lib/
 │   ├── supabase/
-│   ├── gemini/
+│   ├── verification/
 │   └── validations/
 │
 ├── types/
@@ -361,7 +361,7 @@ Expected variables include:
 NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
-GEMINI_API_KEY
+XAI_API_KEY
 ```
 
 Never commit `.env.local`.
@@ -410,7 +410,7 @@ Server-only secrets must never be exposed to the browser.
 4. Do not independently modify API contracts.
 5. Do not expose API keys.
 6. Do not trust frontend authorization.
-7. Do not call Gemini directly from the browser.
+7. Do not call Grok directly from the browser.
 8. Do not code directly on main.
 9. Do not commit secrets.
 10. Do not add unnecessary libraries.

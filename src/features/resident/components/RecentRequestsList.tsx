@@ -110,7 +110,7 @@ export const RecentRequestsList: React.FC = () => {
   const formatVerificationAnalysis = (analysisText: string): string => {
     if (!analysisText) return 'No detailed explanation was provided.';
 
-    if (analysisText.includes('Gemini Analysis:')) {
+    if (analysisText.includes('Grok Analysis:')) {
       const reasoningIndex = analysisText.indexOf('Reasoning:');
       if (reasoningIndex !== -1) {
         return analysisText.substring(reasoningIndex + 10).trim();

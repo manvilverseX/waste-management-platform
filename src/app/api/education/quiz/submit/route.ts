@@ -4,7 +4,7 @@ import { ApiResponse } from '@/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-interface GeminiImageAssessment {
+interface GrokImageAssessment {
   verdict: 'relevant' | 'irrelevant';
   confidence: number;
   reasoning: string;
@@ -21,17 +21,17 @@ interface QuizSubmitResult {
   aiReasoning: string | null;
 }
 
-// ── Gemini image relevance assessment ────────────────────────────────────
+// ── Grok image relevance assessment ────────────────────────────────────
 
 async function assessImageRelevance(
   imageBase64: string,
   imageMimeType: string,
   questionTitle: string,
   questionContent: string
-): Promise<GeminiImageAssessment> {
-  const apiKey = process.env.GEMINI_API_KEY;
+): Promise<GrokImageAssessment> {
+  const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured');
+    throw new Error('XAI_API_KEY is not configured');
   }
 
   const prompt = `You are assessing whether a user's photo submission is genuinely relevant
@@ -45,56 +45,62 @@ Evaluate whether the submitted image:
 2. Is a genuine photo — not a screenshot, cartoon, meme, blank image, or solid colour
 3. Is sufficiently lit and in-focus to be meaningful as evidence of environmental awareness
 
-Be strict: only mark as "relevant" if you are confident the image depicts something
-directly related to the environmental topic of the question.
+Be strict: only mark as "relevant" if confident the image depicts something directly related to the environmental topic.
 
-Output ONLY valid JSON with no additional text:
+Output ONLY valid JSON:
 { "verdict": "relevant" or "irrelevant", "confidence": 0.0 to 1.0, "reasoning": "one sentence" }
 
 Rules:
-- "relevant" only if confidence >= 0.70 AND image is a genuine real-world environmental photo
+- "relevant" only if confidence >= 0.70 AND the image is a genuine real-world environmental photo
 - "irrelevant" for screenshots, unrelated subjects, selfies, blank images, or very low confidence
-- Do NOT attempt to identify people. Focus only on waste/environmental subject matter.`;
+- Do NOT identify people. Focus only on waste/environmental subject matter.`;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { inlineData: { mimeType: imageMimeType, data: imageBase64 } },
-            { text: prompt }
-          ]
-        }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'object',
-            properties: {
-              verdict:    { type: 'string', enum: ['relevant', 'irrelevant'] },
-              confidence: { type: 'number' },
-              reasoning:  { type: 'string' }
-            },
-            required: ['verdict', 'confidence', 'reasoning']
-          }
-        }
-      })
-    }
-  );
+  const response = await fetch('https://api.x.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'grok-4.7',
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${imageMimeType};base64,${imageBase64}`,
+              detail: 'high'
+            }
+          },
+          { type: 'text', text: prompt }
+        ]
+      }],
+      response_format: { type: 'json_object' },
+      temperature: 0.1
+    })
+  });
 
   if (!response.ok) {
-    throw new Error(`Gemini API responded with HTTP ${response.status}`);
+    throw new Error(`Grok API responded with HTTP ${response.status}`);
   }
 
   const json = await response.json();
-  const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('Empty response from Gemini');
+  const responseText = json.choices?.[0]?.message?.content;
+  if (typeof responseText !== 'string' || !responseText.trim()) {
+    throw new Error('Empty response from Grok');
+  }
 
-  const parsed: GeminiImageAssessment = JSON.parse(text);
-  if (!parsed.verdict || typeof parsed.confidence !== 'number') {
-    throw new Error('Malformed Gemini response schema');
+  const parsed: GrokImageAssessment = JSON.parse(responseText);
+  if (
+    !['relevant', 'irrelevant'].includes(parsed.verdict) ||
+    typeof parsed.confidence !== 'number' ||
+    !Number.isFinite(parsed.confidence) ||
+    parsed.confidence < 0 ||
+    parsed.confidence > 1 ||
+    typeof parsed.reasoning !== 'string'
+  ) {
+    throw new Error('Malformed Grok response schema');
   }
 
   return parsed;
@@ -178,7 +184,7 @@ export async function POST(request: NextRequest) {
           aiConfidence = 0;
           aiReasoning = 'Could not retrieve submitted image for assessment.';
         } else {
-          // 3c. Convert to base64 and call Gemini
+          // 3c. Convert to base64 and call Grok
           const arrayBuffer = await fileData.arrayBuffer();
           const base64 = Buffer.from(arrayBuffer).toString('base64');
           const mimeType = fileData.type || 'image/jpeg';
@@ -195,7 +201,7 @@ export async function POST(request: NextRequest) {
             aiReasoning = assessment.reasoning;
           } catch (aiErr) {
             // AI failure is safe — user gets base text-only points
-            console.error('[quiz/submit] Gemini assessment failed (safe fallback):', aiErr);
+            console.error('[quiz/submit] Grok assessment failed (safe fallback):', aiErr);
             aiVerdict = 'error';
             aiConfidence = 0;
             aiReasoning = aiErr instanceof Error ? aiErr.message : 'AI assessment unavailable.';

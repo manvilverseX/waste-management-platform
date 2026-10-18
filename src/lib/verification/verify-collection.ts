@@ -155,12 +155,12 @@ export async function verifyCollectionRequest(
     imageAnalysis = notes || `Manual verification: ${manualDecision}`;
     confidenceScore = imageDecision === 'verified' ? 100 : 0;
   } else {
-    // Automated Gemini Verification Flow
-    const apiKey = process.env.GEMINI_API_KEY;
+    // Automated Grok vision verification flow
+    const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
-      console.warn('[verifyCollectionRequest] GEMINI_API_KEY environment variable is not defined. Defaulting to safe review.');
+      console.warn('[verifyCollectionRequest] XAI_API_KEY environment variable is not defined. Defaulting to safe review.');
       imageDecision = 'needs_review';
-      imageAnalysis = 'Verification requires manual review. Reason: Gemini API Key is not configured on the server.';
+      imageAnalysis = 'Verification requires manual review. Reason: Grok API key is not configured on the server.';
       confidenceScore = 0;
     } else {
       try {
@@ -174,134 +174,107 @@ export async function verifyCollectionRequest(
           downloadEvidenceImage(supabase, afterUrl)
         ]);
 
-          const PROMPT = `You are an expert system verifying waste collection requests.
-Analyze the two attached images of a waste collection site:
+        const PROMPT = `You are an expert system verifying waste collection requests.
+Analyze two attached images of a waste collection site:
 1. First image: BEFORE evidence (should contain waste/garbage).
-2. Second image: AFTER evidence (should be clean/empty after waste collection).
+2. Second image: AFTER evidence (should be clean/empty after collection).
 
-Your task is to determine if the waste has been successfully collected and removed.
+Determine whether the waste was successfully collected and removed.
 
 Rules:
-1. Do not assume collection occurred merely because images are different.
-2. Compare the visible waste between BEFORE and AFTER.
-3. Look for meaningful visual evidence of removal (e.g. empty container, clean ground where garbage was piled).
-4. Do not treat image differences or simple angles as proof.
-5. If the images are too dark, blurry, obstructed, unrelated, or too ambiguous to compare, return decision "needs_review" and a low confidence score.
-6. Do not perform facial recognition or infer the identity of any people.
-7. Focus only on waste/evidence relevant to collection.
+- Do not assume collection occurred merely because images are different.
+- Compare visible waste between BEFORE and AFTER and look for meaningful evidence of removal.
+- Do not treat different camera angles, lighting, or image differences alone as proof.
+- If either image is dark, blurry, obstructed, unrelated, or ambiguous, return "needs_review" with low confidence.
+- Do not perform facial recognition or infer anyone's identity. Focus only on waste and collection evidence.
+- Return only a valid JSON object with this exact shape:
+{
+  "decision": "verified" | "rejected" | "needs_review",
+  "confidence": number from 0 to 1,
+  "before_assessment": { "waste_visible": boolean, "summary": string },
+  "after_assessment": { "waste_removed": boolean, "summary": string },
+  "same_location_likelihood": number from 0 to 1,
+  "reasoning": string
+}
+Use "verified" only when there is clear visual evidence that the waste was removed and both images likely show the same location. Use "rejected" only when the evidence clearly indicates collection was not completed or is fraudulent; otherwise prefer "needs_review".`;
 
-Output a structured JSON response matching the schema.`;
-
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                contents: [
+        const response = await fetch('https://api.x.ai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'grok-4.7',
+            messages: [
+              {
+                role: 'user',
+                content: [
                   {
-                    parts: [
-                      {
-                        inlineData: {
-                          mimeType: imgBefore.mimeType,
-                          data: imgBefore.base64
-                        }
-                      },
-                      {
-                        inlineData: {
-                          mimeType: imgAfter.mimeType,
-                          data: imgAfter.base64
-                        }
-                      },
-                      {
-                        text: PROMPT
-                      }
-                    ]
-                  }
-                ],
-                generationConfig: {
-                  responseMimeType: 'application/json',
-                  responseSchema: {
-                    type: 'object',
-                    properties: {
-                      decision: {
-                        type: 'string',
-                        enum: ['verified', 'rejected', 'needs_review']
-                      },
-                      confidence: {
-                        type: 'number'
-                      },
-                      before_assessment: {
-                        type: 'object',
-                        properties: {
-                          waste_visible: { type: 'boolean' },
-                          summary: { type: 'string' }
-                        },
-                        required: ['waste_visible', 'summary']
-                      },
-                      after_assessment: {
-                        type: 'object',
-                        properties: {
-                          waste_removed: { type: 'boolean' },
-                          summary: { type: 'string' }
-                        },
-                        required: ['waste_removed', 'summary']
-                      },
-                      same_location_likelihood: {
-                        type: 'number'
-                      },
-                      reasoning: {
-                        type: 'string'
-                      }
-                    },
-                    required: [
-                      'decision',
-                      'confidence',
-                      'before_assessment',
-                      'after_assessment',
-                      'same_location_likelihood',
-                      'reasoning'
-                    ]
-                  }
-                }
-              })
-            }
-          );
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${imgBefore.mimeType};base64,${imgBefore.base64}`,
+                      detail: 'high'
+                    }
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${imgAfter.mimeType};base64,${imgAfter.base64}`,
+                      detail: 'high'
+                    }
+                  },
+                  { type: 'text', text: PROMPT }
+                ]
+              }
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0.1
+          })
+        });
 
-          if (!response.ok) {
-            throw new Error(`GEMINI_API_ERROR: Gemini service responded with HTTP status ${response.status}`);
-          }
+        if (!response.ok) {
+          throw new Error(`GROK_API_ERROR: Grok service responded with HTTP status ${response.status}`);
+        }
 
-          const responseJson = await response.json();
-          const responseText = responseJson.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!responseText) {
-            throw new Error('MALFORMED_MODEL_RESPONSE: Missing text content in Gemini response.');
-          }
+        const responseJson = await response.json();
+        const responseText = responseJson.choices?.[0]?.message?.content;
+        if (typeof responseText !== 'string' || !responseText.trim()) {
+          throw new Error('MALFORMED_MODEL_RESPONSE: Missing text content in Grok response.');
+        }
 
-          const resultObj = JSON.parse(responseText);
+        const resultObj = JSON.parse(responseText);
+        const validDecisions = ['verified', 'rejected', 'needs_review'];
+        if (
+          !validDecisions.includes(resultObj.decision) ||
+          typeof resultObj.confidence !== 'number' ||
+          !Number.isFinite(resultObj.confidence) ||
+          resultObj.confidence < 0 ||
+          resultObj.confidence > 1 ||
+          typeof resultObj.same_location_likelihood !== 'number' ||
+          !Number.isFinite(resultObj.same_location_likelihood)
+        ) {
+          throw new Error('SCHEMA_VALIDATION_FAILURE: Grok response has invalid decision or confidence values.');
+        }
 
-          if (!resultObj.decision || typeof resultObj.confidence !== 'number') {
-            throw new Error('SCHEMA_VALIDATION_FAILURE: Gemini response missing decision or confidence.');
-          }
+        const parsedDecision = resultObj.decision as 'verified' | 'rejected' | 'needs_review';
+        const confidence = resultObj.confidence;
+        const sameLocation = resultObj.same_location_likelihood;
 
-          const parsedDecision = resultObj.decision;
-          const confidence = resultObj.confidence;
-          const sameLocation = resultObj.same_location_likelihood ?? 1.0;
+        if (parsedDecision === 'verified' && confidence >= 0.70 && sameLocation >= 0.60) {
+          imageDecision = 'verified';
+        } else {
+          // Conservative policy: model rejection is also sent to a human reviewer.
+          imageDecision = 'needs_review';
+        }
 
-          if (parsedDecision === 'verified' && confidence >= 0.70 && sameLocation >= 0.60) {
-            imageDecision = 'verified';
-          } else {
-            imageDecision = 'needs_review';
-          }
-
-          imageAnalysis = `Gemini Analysis: Decision=${resultObj.decision}, Confidence=${resultObj.confidence * 100}%, SameLocation=${sameLocation * 100}%. Reasoning: ${resultObj.reasoning}`;
-          confidenceScore = confidence * 100;
-      } catch (err: any) {
-        console.error('[verifyCollectionRequest] Automated verification failed, falling back to manual review:', err);
+        imageAnalysis = `Grok Analysis: Decision=${parsedDecision}, Confidence=${confidence * 100}%, SameLocation=${sameLocation * 100}%. Reasoning: ${String(resultObj.reasoning || 'No reasoning provided.')}`;
+        confidenceScore = confidence * 100;
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        console.error('[verifyCollectionRequest] Automated Grok verification failed, falling back to manual review:', err);
         imageDecision = 'needs_review';
-        imageAnalysis = `Automated verification error (falling back to manual review): ${err.message || 'Unknown error'}`;
+        imageAnalysis = `Automated Grok verification error (falling back to manual review): ${errorMessage}`;
         confidenceScore = 0;
       }
     }
