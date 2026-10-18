@@ -661,7 +661,7 @@ export const MunicipalityDashboard: React.FC = () => {
                                 <div className="flex justify-between items-center text-3xs pt-1 border-t border-white/[0.03]">
                                   <span className="font-extrabold text-charcoal-450 uppercase tracking-wider">GPS Delta Proximity</span>
                                   <span className="font-bold text-white">
-                                    {gpsDec} ({gpsDist?.toFixed(1) || '0'}m)
+                                    {gpsDec} ({gpsDist !== null && gpsDist !== undefined ? `${gpsDist.toFixed(1)}m` : 'N/A'})
                                   </span>
                                 </div>
                               )}

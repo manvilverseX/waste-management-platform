@@ -167,17 +167,12 @@ export async function verifyCollectionRequest(
         const beforeUrl = beforeEvidence.image_url;
         const afterUrl = afterEvidence.image_url;
 
-        // Fast-path identical image check
-        if (beforeUrl === afterUrl) {
-          imageDecision = 'verified';
-          imageAnalysis = 'Automated check verification: BEFORE and AFTER images are identical (same URL). Automatically verifying collection.';
-          confidenceScore = 100;
-        } else {
-          // Fetch images and send to Gemini
-          const [imgBefore, imgAfter] = await Promise.all([
-            downloadEvidenceImage(supabase, beforeUrl),
-            downloadEvidenceImage(supabase, afterUrl)
-          ]);
+        // Always compare the actual evidence images. Identical URLs are not proof
+        // that waste was removed, so never auto-verify based on URL equality.
+        const [imgBefore, imgAfter] = await Promise.all([
+          downloadEvidenceImage(supabase, beforeUrl),
+          downloadEvidenceImage(supabase, afterUrl)
+        ]);
 
           const PROMPT = `You are an expert system verifying waste collection requests.
 Analyze the two attached images of a waste collection site:
@@ -303,7 +298,6 @@ Output a structured JSON response matching the schema.`;
 
           imageAnalysis = `Gemini Analysis: Decision=${resultObj.decision}, Confidence=${resultObj.confidence * 100}%, SameLocation=${sameLocation * 100}%. Reasoning: ${resultObj.reasoning}`;
           confidenceScore = confidence * 100;
-        }
       } catch (err: any) {
         console.error('[verifyCollectionRequest] Automated verification failed, falling back to manual review:', err);
         imageDecision = 'needs_review';

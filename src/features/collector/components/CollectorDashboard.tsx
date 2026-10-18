@@ -305,7 +305,41 @@ export const CollectorDashboard: React.FC = () => {
     setIsSubmittingEvidence(true);
     setEvidenceError(null);
 
+    // A collector may upload a photo instead of using the live camera. In that
+    // case, request GPS here as well so evidence can still carry location metadata.
+    let submissionLatitude = collectorLatitude;
+    let submissionLongitude = collectorLongitude;
+    let submissionAccuracy = collectorGpsAccuracy;
+    let submissionTimestamp = collectorGpsTimestamp;
+
     try {
+      if (submissionLatitude === null || submissionLongitude === null) {
+        try {
+          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+            if (!navigator.geolocation) {
+              reject(new Error('Geolocation is not supported by this browser.'));
+              return;
+            }
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 8000,
+              maximumAge: 0
+            });
+          });
+          submissionLatitude = position.coords.latitude;
+          submissionLongitude = position.coords.longitude;
+          submissionAccuracy = position.coords.accuracy;
+          submissionTimestamp = new Date(position.timestamp).toISOString();
+          setCollectorLatitude(submissionLatitude);
+          setCollectorLongitude(submissionLongitude);
+          setCollectorGpsAccuracy(submissionAccuracy);
+          setCollectorGpsTimestamp(submissionTimestamp);
+        } catch (gpsError) {
+          console.warn('GPS capture at evidence submission failed:', gpsError);
+          setCameraError('GPS could not be captured. Evidence will be submitted without GPS coordinates.');
+        }
+      }
+
       const { data: { session } } = await supabaseBrowserClient.auth.getSession();
       if (!session) throw new Error('Session expired. Log in again.');
 
@@ -314,11 +348,11 @@ export const CollectorDashboard: React.FC = () => {
       formData.append('collectionRequestId', activeRequest.id);
       formData.append('evidenceType', 'COLLECTOR_AFTER');
 
-      if (collectorLatitude !== null && collectorLongitude !== null) {
-        formData.append('latitude', collectorLatitude.toString());
-        formData.append('longitude', collectorLongitude.toString());
-        if (collectorGpsAccuracy !== null) formData.append('gpsAccuracy', collectorGpsAccuracy.toString());
-        if (collectorGpsTimestamp !== null) formData.append('gpsCapturedAt', collectorGpsTimestamp);
+      if (submissionLatitude !== null && submissionLongitude !== null) {
+        formData.append('latitude', submissionLatitude.toString());
+        formData.append('longitude', submissionLongitude.toString());
+        if (submissionAccuracy !== null) formData.append('gpsAccuracy', submissionAccuracy.toString());
+        if (submissionTimestamp !== null) formData.append('gpsCapturedAt', submissionTimestamp);
       }
 
       const res = await fetch('/api/evidence', {
