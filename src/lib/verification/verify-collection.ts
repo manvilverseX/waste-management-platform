@@ -278,7 +278,6 @@ Use "verified" only when there is clear visual evidence that the waste was remov
         confidenceScore = 0;
       }
     }
-    }
   }
 
   // 6. Combine Image & GPS verification signals
